@@ -77,6 +77,14 @@ def register_ui_region(context, visible_item_ids: tuple[str, ...]) -> None:
         "visible_item_ids": tuple(dict.fromkeys(visible_item_ids)),
         "last_seen": time.monotonic(),
     }
+    if visible_item_ids:
+        from . import preview_cache
+
+        preview_cache.service_visible_items(
+            tuple(dict.fromkeys(visible_item_ids)),
+            current_preview_ms(),
+            fps_limit=preview_frame_rate(),
+        )
 
 
 def _live_ui_targets(now_monotonic: float | None = None) -> tuple:
@@ -413,10 +421,9 @@ def _playback_post_handler(*_args) -> None:
 
 @persistent
 def _load_post_handler(*_args) -> None:
-    from . import library, preview_cache
+    from . import library
 
     stop()
-    preview_cache.clear()
     _UI_REGION_TARGETS.clear()
     library.schedule_startup_refresh()
 
@@ -442,7 +449,11 @@ def _engine_responsive(now_monotonic: float | None = None) -> bool:
 
 
 def _watchdog_tick() -> float:
-    if visible_item_ids() and not _engine_responsive():
+    ids = visible_item_ids()
+    from . import preview_cache
+
+    preview_cache.trim_offscreen_items(ids)
+    if ids and not _engine_responsive():
         if _ENGINE_RUNNING:
             stop()
         schedule_start()
@@ -683,6 +694,11 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
 
                 now_ms = preview_clock_ms()
                 fps_limit = preview_frame_rate()
+                preview_cache.service_visible_items(
+                    ids,
+                    now_ms,
+                    fps_limit=fps_limit,
+                )
                 signature = preview_cache.frame_signature(
                     ids,
                     now_ms,

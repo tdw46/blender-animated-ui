@@ -79,13 +79,16 @@ def refresh_scene(scene) -> int:
         return 0
     discovered = discover_caches()
     scene.animthumb_items.clear()
-    from . import preview_cache
+    from . import preview_cache, preview_engine
 
-    preview_cache.clear()
     for cache_dir, metadata in discovered:
         item = scene.animthumb_items.add()
         _populate_item(item, cache_dir, metadata)
-        preview_cache.load_item(item)
+    preview_cache.reconcile_items(
+        scene.animthumb_items,
+        now_ms=preview_engine.current_preview_ms(),
+        fps_limit=preview_engine.preview_frame_rate(),
+    )
     max_page = max(0, (len(discovered) - 1) // GALLERY_PAGE_SIZE)
     scene.animthumb_gallery_page = min(
         max(0, int(scene.animthumb_gallery_page)),

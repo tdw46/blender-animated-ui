@@ -53,6 +53,19 @@ try:
             )
 
     package.library.refresh_scene(bpy.context.scene)
+    cached_before_refresh = {
+        item_id: package.preview_cache._ITEMS[item_id] for item_id in result_ids
+    }
+    collection_size_before_refresh = len(package.preview_cache._COLLECTION)
+    package.library.refresh_scene(bpy.context.scene)
+    if any(
+        package.preview_cache._ITEMS[item_id] is not cached_before_refresh[item_id]
+        for item_id in result_ids
+    ):
+        raise RuntimeError("No-op library refresh replaced unchanged previews")
+    if len(package.preview_cache._COLLECTION) != collection_size_before_refresh:
+        raise RuntimeError("No-op library refresh changed the preview collection")
+
     loaded = {}
     for item_id in result_ids:
         item = next(

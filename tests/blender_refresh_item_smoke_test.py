@@ -40,6 +40,11 @@ original_cache_dir = str(items[0].cache_dir)
 if str(items[0].name) != "Initial Imported Name":
     raise RuntimeError("Initial ingest ignored Imported Name")
 
+package = __import__(
+    MODULE,
+    fromlist=["cache_format", "library", "preview_cache"],
+)
+initial_cached_preview = package.preview_cache._ITEMS[item_id]
 refresh_result = set(
     bpy.ops.animthumb.refresh_item(
         item_id=item_id,
@@ -50,7 +55,6 @@ refresh_result = set(
 if "FINISHED" not in refresh_result:
     raise RuntimeError(f"Per-item refresh failed: {sorted(refresh_result)}")
 
-package = __import__(MODULE, fromlist=["cache_format", "library"])
 refreshed = next(
     (
         item
@@ -65,6 +69,8 @@ if str(refreshed.name) != "Refresh Imported Name":
     raise RuntimeError("Refresh ignored Imported Name")
 if str(refreshed.cache_dir) != original_cache_dir:
     raise RuntimeError("Refresh moved the cache after its imported name changed")
+if package.preview_cache._ITEMS[item_id] is initial_cached_preview:
+    raise RuntimeError("Rebuilt item incorrectly retained its stale previews")
 metadata = package.cache_format.read_metadata(str(refreshed.cache_dir))
 if str(metadata.get("name", "")) != "Refresh Imported Name":
     raise RuntimeError("Refresh did not persist Imported Name")
@@ -80,6 +86,8 @@ duration_tolerance_ms = max(150, int(round(source_duration_ms * 0.05)))
 if abs(preview_duration_ms - source_duration_ms) > duration_tolerance_ms:
     raise RuntimeError("Untrimmed refresh shortened the source preview window")
 full_frame_count = int(refreshed.frame_count)
+refreshed_cached_preview = package.preview_cache._ITEMS[item_id]
+refreshed_loaded_count = package.preview_cache.loaded_frame_count(item_id)
 
 rename_result = set(
     bpy.ops.animthumb.rename_item(
@@ -96,6 +104,10 @@ if str(renamed_item.name) != "Renamed Without Rebuild":
     raise RuntimeError("Per-item rename did not update the gallery item")
 if str(renamed_item.cache_dir) != original_cache_dir:
     raise RuntimeError("Per-item rename moved the cache directory")
+if package.preview_cache._ITEMS[item_id] is not refreshed_cached_preview:
+    raise RuntimeError("Metadata-only rename replaced unchanged previews")
+if package.preview_cache.loaded_frame_count(item_id) != refreshed_loaded_count:
+    raise RuntimeError("Metadata-only rename reloaded preview frames")
 renamed_metadata = package.cache_format.read_metadata(str(renamed_item.cache_dir))
 if str(renamed_metadata.get("name", "")) != "Renamed Without Rebuild":
     raise RuntimeError("Per-item rename did not persist cache metadata")
