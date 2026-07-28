@@ -204,14 +204,24 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
         from . import ffmpeg_bridge
 
         dependency_status = ffmpeg_bridge.status()
-        if not dependency_status.get("wheel_ready"):
+        if not dependency_status.get("media_wheels_ready"):
             dependency_box = layout.box()
             row = dependency_box.row()
             row.alert = not bool(dependency_status.get("ready"))
-            if dependency_status.get("system_executable"):
-                row.label(text="System FFmpeg found; wheel is optional", icon="INFO")
+            if dependency_status.get("system_executable") and not dependency_status.get(
+                "pillow_ready"
+            ):
+                row.label(
+                    text="Bundled Pillow unavailable; repair required",
+                    icon="ERROR",
+                )
+            elif dependency_status.get("system_executable"):
+                row.label(
+                    text="Bundled FFmpeg unavailable; system fallback active",
+                    icon="INFO",
+                )
             else:
-                row.label(text="FFmpeg wheel required for media ingest", icon="ERROR")
+                row.label(text="Bundled media wheels need repair", icon="ERROR")
             dependency_box.operator(
                 "animthumb.install_ffmpeg",
                 icon="IMPORT",

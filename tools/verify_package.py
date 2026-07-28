@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath
 
 REQUIRED_FILES = {
     "__init__.py",
+    "animated_webp.py",
     "auto_load.py",
     "blender_manifest.toml",
     "LICENSE",
@@ -33,6 +36,11 @@ REJECTED_SUFFIXES = {
     ".sh",
     ".zip",
 }
+WHEEL_HASHES_PATH = Path(__file__).with_name("wheel_hashes.json")
+
+
+def _wheel_hashes() -> dict[str, str]:
+    return json.loads(WHEEL_HASHES_PATH.read_text(encoding="utf-8"))
 
 
 def verify_package(path: Path) -> tuple[str, str, int]:
@@ -57,6 +65,29 @@ def verify_package(path: Path) -> tuple[str, str, int]:
                 "Archive contains development/generated files: " + ", ".join(rejected)
             )
         manifest = tomllib.loads(archive.read("blender_manifest.toml").decode("utf-8"))
+        declared_wheels = {
+            str(PurePosixPath(value).name) for value in manifest.get("wheels", ())
+        }
+        archived_wheels = {
+            PurePosixPath(name).name
+            for name in names
+            if PurePosixPath(name).suffix.lower() == ".whl"
+        }
+        undeclared_wheels = sorted(archived_wheels - declared_wheels)
+        if undeclared_wheels:
+            raise ValueError(
+                "Archive contains undeclared wheels: " + ", ".join(undeclared_wheels)
+            )
+        hashes = _wheel_hashes()
+        unknown_wheels = sorted(archived_wheels - hashes.keys())
+        if unknown_wheels:
+            raise ValueError(
+                "Archive contains unlocked wheels: " + ", ".join(unknown_wheels)
+            )
+        for name in sorted(archived_wheels):
+            digest = hashlib.sha256(archive.read(f"wheels/{name}")).hexdigest()
+            if digest != hashes[name]:
+                raise ValueError(f"Archive wheel hash mismatch: {name}")
     return str(manifest["id"]), str(manifest["version"]), len(names)
 
 

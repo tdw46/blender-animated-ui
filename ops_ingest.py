@@ -16,6 +16,7 @@ from bpy.props import (
 from bpy.types import OperatorFileListElement
 
 from . import ffmpeg_bridge
+from .animated_webp import inspect_animated_webp
 from .constants import DEFAULT_IMPORT_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
 from .media_selection import (
     DEFAULT_SEQUENCE_ORDER,
@@ -205,7 +206,13 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         if len(selected) > 1:
             selected = order_sequence_paths(selected, self.sequence_order)
 
-        dependency_status = prepare_ffmpeg(context, self)
+        dependency_status = prepare_ffmpeg(
+            context,
+            self,
+            require_pillow=(
+                len(selected) == 1 and inspect_animated_webp(selected[0]) is not None
+            ),
+        )
         if dependency_status is None:
             return {"CANCELLED"}
 
@@ -222,6 +229,9 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
                 trim_media=bool(self.trim_media),
                 trim_start_frame=int(self.trim_start_frame),
                 trim_end_frame=int(self.trim_end_frame),
+                dependency_directory=str(
+                    dependency_status.get("dependency_root", "") or ""
+                ),
             )
         except Exception as error:
             set_status(context, str(error), "ERROR")
@@ -413,7 +423,14 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
             return {"CANCELLED"}
         if len(source_paths) > 1:
             source_paths = order_sequence_paths(source_paths, self.sequence_order)
-        dependency_status = prepare_ffmpeg(context, self)
+        dependency_status = prepare_ffmpeg(
+            context,
+            self,
+            require_pillow=(
+                len(source_paths) == 1
+                and inspect_animated_webp(source_paths[0]) is not None
+            ),
+        )
         if dependency_status is None:
             return {"CANCELLED"}
         set_status(context, f"Rebuilding {item.name}…")
@@ -432,6 +449,9 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
                 trim_media=bool(self.trim_media),
                 trim_start_frame=int(self.trim_start_frame),
                 trim_end_frame=int(self.trim_end_frame),
+                dependency_directory=str(
+                    dependency_status.get("dependency_root", "") or ""
+                ),
             )
         except Exception as error:
             set_status(context, str(error), "ERROR")

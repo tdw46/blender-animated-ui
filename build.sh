@@ -80,19 +80,25 @@ PY
 
 EXTENSION_ID="$(printf '%s\n' "$METADATA" | sed -n '1p')"
 EXTENSION_VERSION="$(printf '%s\n' "$METADATA" | sed -n '2p')"
-PACKAGE_PATH="$SCRIPT_DIR/${EXTENSION_ID}-${EXTENSION_VERSION}.zip"
-
-rm -f "$PACKAGE_PATH"
+rm -f \
+    "$SCRIPT_DIR/${EXTENSION_ID}-${EXTENSION_VERSION}.zip" \
+    "$SCRIPT_DIR/${EXTENSION_ID}-${EXTENSION_VERSION}-"*.zip
 "$BLENDER_BIN" \
     --background \
     --factory-startup \
     --command extension build \
     --source-dir "$SCRIPT_DIR" \
-    --output-dir "$SCRIPT_DIR"
+    --output-dir "$SCRIPT_DIR" \
+    --split-platforms
 
-if [[ ! -f "$PACKAGE_PATH" ]]; then
-    echo "Build failed: expected package was not created: $PACKAGE_PATH"
+shopt -s nullglob
+PACKAGES=("$SCRIPT_DIR/${EXTENSION_ID}-${EXTENSION_VERSION}-"*.zip)
+if [[ "${#PACKAGES[@]}" -eq 0 ]]; then
+    echo "Build failed: no platform packages were created."
     exit 1
 fi
 
-echo "Built: $PACKAGE_PATH"
+for package_path in "${PACKAGES[@]}"; do
+    python3 "$SCRIPT_DIR/tools/verify_package.py" "$package_path"
+    echo "Built: $package_path"
+done

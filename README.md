@@ -1,6 +1,6 @@
 # Animated Thumbnail Preview Demo
 
-![Animated thumbnail previews running in the Blender N-panel gallery](<resources/Blender Animated Thumbnails 1.webp>)
+![Animated thumbnail previews running in the Blender N-panel gallery](resources/blender-animated-thumbs-1.webp)
 
 A reusable example library for adding efficient animated preview thumbnails to
 Blender extensions.
@@ -29,10 +29,12 @@ The playback architecture provides:
 
 ## Install and try the demo
 
-1. Download `blender_animated_ui-<version>.zip` from the
+1. Download `blender_animated_ui-<version>-<platform>.zip` from the
    [GitHub Releases page](https://github.com/tdw46/blender-animated-ui/releases).
-   Use the named extension asset, not GitHub's automatically generated
-   **Source code** archive, because Blender expects the manifest at the ZIP root.
+   Choose `windows_x64`, `macos_arm64`, `macos_x64`, `linux_x64`, or
+   `linux_arm64` for the computer running Blender. Use the named extension
+   asset, not GitHub's automatically generated **Source code** archive, because
+   Blender expects the manifest at the ZIP root.
 2. In Blender 4.2 or newer, open Preferences → Get Extensions, use the
    drop-down menu, and choose **Install from Disk**.
 3. Open the 3D View sidebar and select the **Animated Previews** tab.
@@ -48,7 +50,7 @@ is sampled at that lower native rate instead of being upsampled. Use the arrow
 beneath any card to rebuild it with new settings and an editable imported name,
 rename it without rebuilding, open its cache directory, or delete it.
 
-![Importing animated media, opening its item actions, and renaming the thumbnail](<resources/Blender Animated Thumbnails 3.webp>)
+![Installing the extension and trying the animated thumbnail demo](resources/blender-animated-thumbs-2.webp)
 
 The gallery targets 32 MiB of decoded preview RAM by default. It automatically
 paginates large libraries so each visible animated thumbnail can keep a useful
@@ -74,26 +76,38 @@ last-ready image while the frame settles. Newly imported media still uses
 Blender's normal loading indicator until its first display frame is ready, so
 the UI continues to distinguish a genuine first load from a background refill.
 
-On the first ingest, the extension can install the platform-specific
-`imageio-ffmpeg` 0.6.0 wheel into persistent extension-user storage. The wheel
-contains its FFmpeg executable. Nothing is installed into Blender’s managed
-extension source, the global Python environment, or a raw `.whl` path.
+Install-from-Disk packages are self-contained. The manifest declares unmodified
+`imageio-ffmpeg` 0.6.0 and Pillow 12.3.0 wheels for every supported platform,
+with Pillow builds for both Blender's CPython 3.11 and 3.13 series. Blender
+extracts the compatible wheels into its managed extension `site-packages`
+directory during installation. Normal ingest therefore needs no network
+access, pip step, system FFmpeg, or writable add-on source directory.
 
-If Online Access is disabled, the extension asks the user to enable it before
-running pip. An existing system FFmpeg executable is accepted as a fallback.
+The imageio wheel contains the platform FFmpeg executable. Because Blender's
+wheel extraction does not preserve its POSIX executable bit, the bridge copies
+that one binary into writable extension-user storage and marks the copy
+executable; it never modifies Blender's managed `site-packages`. Pillow supplies
+the animated WebP decoder because FFmpeg 7.1 does not decode WebP `ANIM`/`ANMF`
+chunks. Pillow remains isolated from Blender's main interpreter during frame
+extraction. A network-aware repair operator is retained only for an incomplete
+source checkout or a future Python ABI that does not match the bundled matrix;
+it installs binary wheels into persistent extension-user storage and never
+adds a raw `.whl` or dependency directory to Blender's global `sys.path`.
 
 To build an installable ZIP from a source checkout, use the platform script and
 then verify the result:
 
 ```bash
 BLENDER_PATH="/absolute/path/to/blender" ./build.sh
-python3 tools/verify_package.py blender_animated_ui-0.1.0.zip
+python3 tools/verify_package.py blender_animated_ui-0.1.0-macos_arm64.zip
 ```
 
 On Windows, set `BLENDER_PATH` and run `build.bat`, then run the same verifier
 with Blender's Python or another Python 3.11+ interpreter. The scripts validate
 that `blender_manifest.toml` and legacy `bl_info` versions match before
-packaging.
+packaging. Platform-split builds contain one imageio-FFmpeg wheel and both
+supported Pillow ABI wheels instead of shipping all 185 MiB of wheels to every
+user.
 
 ## Supported input
 
@@ -130,6 +144,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | Module | Responsibility | Blender dependency |
 | --- | --- | --- |
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
+| `animated_webp.py` | Fast RIFF timing inspection and isolated Pillow frame extraction | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
 | `media_selection.py` | Default imported-name derivation and deterministic sequence ordering | None |
 | `gallery_settings.py` | Shared cog defaults and thumbnail-scale calculation | None |
@@ -139,14 +154,14 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
 | `media_ingest.py` | FFmpeg probing, trimming, and atomic cache generation | None when `cache_directory` is supplied |
-| `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | Blender path helpers and Python subprocesses |
+| `ffmpeg_bridge.py` | Isolated FFmpeg/Pillow wheel install and executable discovery | Blender path helpers and Python subprocesses |
 | `paths.py` | Persistent extension-user cache/dependency paths | `bpy.utils` |
 | `preferences.py` | Optional custom cache-root preference | Blender RNA |
 | `preview_cache.py` | Warm, retain, and evict decoded frames; answer icon/timing queries | `bpy.utils.previews` |
 | `preview_engine.py` | Visible-only modal scheduler, optimized mode, watchdog | Blender runtime |
 | `properties.py` | Scene library items and WindowManager UI settings | Blender RNA |
 | `library.py` | Scan persistent caches into Scene collections | Blender RNA |
-| `ops_dependency.py` | FFmpeg install and readiness operator | Blender operators |
+| `ops_dependency.py` | Media-wheel install and readiness operator | Blender operators |
 | `ops_ingest.py` | File selector, probe analysis, ingest, and item refresh | Blender operators |
 | `ops_cache.py` | Library refresh, item menu, rename, cache folder, and deletion | Blender operators |
 | `ops_gallery.py` | Gallery pagination and settings reset | Blender operators |
@@ -165,6 +180,7 @@ your_extension/
 ├── auto_load.py                # class discovery/registration
 ├── constants.py
 ├── frame_rate.py               # pure shared FPS policy
+├── animated_webp.py            # pure RIFF probe + isolated Pillow adapter
 ├── media_probe.py              # pure FFmpeg probe parser
 ├── media_selection.py          # pure image-sequence ordering
 ├── gallery_settings.py         # pure gallery defaults and scale math
@@ -174,20 +190,21 @@ your_extension/
 ├── media_types.py              # typed conversion profiles/results
 ├── paths.py
 ├── cache_format.py             # pure cache model
-├── ffmpeg_bridge.py            # optional ingest dependency
+├── ffmpeg_bridge.py            # optional FFmpeg/Pillow dependencies
 ├── media_ingest.py             # optional ingest pipeline
 ├── preview_cache.py            # preview icons and frame timing
 ├── preview_engine.py           # one persistent scheduler
 ├── properties.py               # RNA definitions
 ├── preferences.py              # custom cache location
 ├── library.py                  # cache-to-RNA synchronization
-├── ops_dependency.py           # FFmpeg install
+├── ops_dependency.py           # media-wheel install
 ├── ops_ingest.py               # import and item refresh
 ├── ops_cache.py                # cache/library actions
 ├── ops_gallery.py              # pagination
 ├── ui_media_settings.py        # shared import/refresh settings UI
 ├── ui_gallery.py               # example presentation layer
 ├── utils.py                    # Blender-facing shared helpers
+├── wheels/                     # manifest-managed platform/ABI wheels
 └── blender_manifest.toml
 ```
 
@@ -204,10 +221,11 @@ flowchart LR
     UI --> GQ["gallery_query.py<br/>filter and sort"]
     UI --> GP["gallery_pagination.py<br/>RAM-aware visible page"]
 
-    OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
+    OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>media wheels"]
     OP --> MS["media_settings.py<br/>shared analysis"]
     OP --> UIS["ui_media_settings.py<br/>shared settings UI"]
     OP --> MI["media_ingest.py<br/>FFmpeg conversion"]
+    MI --> AW["animated_webp.py<br/>RIFF + isolated Pillow adapter"]
     MI --> MP["media_probe.py<br/>native source rate"]
     MI --> MT["media_types.py<br/>profiles and result"]
     MI --> FPS
@@ -223,7 +241,7 @@ Copy the smallest profile that matches the destination extension:
 | Profile | Required modules | Use when |
 | --- | --- | --- |
 | Playback only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `gallery_pagination.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
-| Ingest only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
+| Ingest only | `constants.py`, `frame_rate.py`, `animated_webp.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
 | Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
 
 `media_ingest.py` is importable without `bpy`. Pass an explicit
@@ -242,9 +260,10 @@ running inside Blender.
    and compatibility ranges, and preserve `LICENSE` plus
    `THIRD_PARTY_NOTICES.md`.
 4. Wire the registration hooks below in the documented order.
-5. Decide whether the destination exposes the supplied FFmpeg install operator,
-   uses a system executable, or supplies its own executable to
-   `media_ingest.ingest_media()`.
+5. Copy the applicable manifest-wheel declarations and `wheels/` payload, or
+   deliberately supply another FFmpeg executable and Pillow directory to
+   `media_ingest.ingest_media()`. Keep the repair operator only if the
+   destination also retains `network` permission.
 6. Run pure tests, register in every declared Blender series, build the
    extension, verify the ZIP, and install that ZIP through **Install from Disk**.
 
@@ -258,6 +277,7 @@ source import.
 For the complete reusable feature, copy these files into another extension:
 
 ```text
+animated_webp.py
 auto_load.py
 cache_format.py
 constants.py
@@ -286,6 +306,7 @@ ui_gallery.py
 utils.py
 LICENSE
 THIRD_PARTY_NOTICES.md
+wheels/
 ```
 
 Then make these project-specific edits:
@@ -295,12 +316,13 @@ Then make these project-specific edits:
    the destination project could collide with another installed copy.
 3. Rename `animthumb_*` RNA properties if the destination extension already
    defines similarly named Scene or WindowManager properties.
-4. Merge the `[permissions]` declarations from `blender_manifest.toml`.
-5. Add or preserve the platform list required by the destination extension.
-6. Keep the dependency and thumbnail cache directories in persistent
-   extension-user storage.
-7. Preserve `auto_load.py` exclusions for vendored or runtime-installed
-   dependency trees.
+4. Merge the manifest `wheels` array and `[permissions]` declarations.
+5. Add or preserve the platform list and every CPython ABI required by the
+   destination extension.
+6. Keep repair dependencies and thumbnail caches in persistent extension-user
+   storage; let Blender own the normal manifest-wheel installation.
+7. Preserve `auto_load.py` exclusions for `wheels/`, vendored packages, and
+   runtime repair dependency trees.
 8. Keep the GPL license and third-party notices with copied or distributed code.
 9. Reload the extension after integration and test registration plus playback
    in every Blender series declared by the destination manifest.
@@ -338,6 +360,7 @@ beginning with `_` are implementation details and may move between modules.
 
 | API | Purpose | Runtime requirement |
 | --- | --- | --- |
+| `animated_webp.inspect_animated_webp(source_path)` | Read animated WebP canvas, alpha, frame count, and per-frame durations directly from RIFF | None |
 | `media_ingest.probe_media(executable, source_path)` | Read native FPS, dimensions, duration, alpha, and frame count | FFmpeg executable; no Blender requirement |
 | `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
 | `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
@@ -382,9 +405,10 @@ the main thread so they can report a deterministic finished/failed result.
 
 ## Using only the playback library
 
-Projects that already generate compatible timed image caches can skip `ffmpeg_bridge.py`,
-`media_ingest.py`, `media_settings.py`, `media_types.py`, `ops_dependency.py`,
-`ops_ingest.py`, and `ui_media_settings.py`.
+Projects that already generate compatible timed image caches can skip
+`animated_webp.py`, `ffmpeg_bridge.py`, `media_ingest.py`, `media_settings.py`,
+`media_types.py`, `ops_dependency.py`, `ops_ingest.py`, and
+`ui_media_settings.py`.
 
 Create a cache directory containing `metadata.json` and timed images:
 
@@ -445,22 +469,24 @@ The conversion layer is callable without the demo panel:
 from .ffmpeg_bridge import status
 from .media_ingest import ingest_media
 
-ffmpeg = status()["executable"]
+media_tools = status()
 result = ingest_media(
-    ffmpeg,
+    media_tools["executable"],
     ["/path/to/animation.gif"],
     display_name="My Animation",
     target_fps=22,
     trim_media=False,
+    dependency_directory=media_tools["dependency_root"],
 )
 print(result.cache_dir)
 ```
 
 The complete Blender UI calls `ops_dependency.prepare_ffmpeg()` before ingest.
-That route honors Blender's Online Access setting, prefers an already installed
-wheel or system FFmpeg, and exposes an explicit install operator when neither is
-ready. A custom Blender UI should follow the same pattern; it should not perform
-network installation from panel draw code.
+That route first discovers Blender's manifest-managed wheels, then persistent
+repair wheels, and finally a system FFmpeg fallback. Online Access is consulted
+only when a bundled capability is missing and the explicit repair path is
+needed. A custom Blender UI should follow the same pattern; it should not
+perform network installation from panel draw code.
 
 Outside Blender, provide the destination explicitly so the module never imports
 `bpy` through the extension path helper:
@@ -476,6 +502,8 @@ result = ingest_media(
 Standalone callers should supply their own FFmpeg executable and
 `cache_directory`; `ffmpeg_bridge.py` intentionally uses Blender's persistent
 extension-user paths and is not part of the Blender-free ingest profile.
+Animated WebP callers must also make Pillow importable by the active Python
+runtime or pass its isolated installation directory as `dependency_directory`.
 
 For image sequences, pass every file in display order:
 
@@ -538,7 +566,10 @@ The default profile resolver uses JPEG quality level 3 for opaque sources and
 WebP quality 82/compression level 4 for sources with alpha. JPEG receives black
 letterboxing; WebP receives transparent letterboxing. Transparent VP8/VP9 WebM
 files are recognized from their WebM alpha metadata and decoded through libvpx
-so their separate alpha stream reaches the cached WebP frames.
+so their separate alpha stream reaches the cached WebP frames. Animated WebP
+timing is read directly from its RIFF container; Pillow extracts composited
+RGBA source frames in an isolated process, and the existing FFmpeg pipeline
+still applies trimming, FPS ceilings, scaling, padding, and cache encoding.
 
 An integration can replace those settings without forking the pipeline:
 
@@ -782,8 +813,6 @@ The settings-cog popover exposes:
 - **Reset Settings**, which restores search, media-type filter, sort, thumbnail
   size, live FPS, RAM target, optimized playback, and the first gallery page.
 
-![Filtering, sorting, rescaling, and limiting live playback FPS from the gallery settings cog](<resources/Blender Animated Thumbnails 2.webp>)
-
 Plain mouse movement, background depsgraph chatter, clicks elsewhere, and
 scrolling outside the gallery do not renew a pause.
 
@@ -828,6 +857,7 @@ the versioned timer and WindowManager APIs.
 
 ```bash
 uv sync
+python3 tools/sync_wheels.py --check
 ./tools/lint.sh
 ./tools/test.sh
 ```
@@ -836,7 +866,7 @@ After building a release candidate, verify the actual artifact rather than only
 the source tree:
 
 ```bash
-python3 tools/verify_package.py blender_animated_ui-0.1.0.zip
+python3 tools/verify_package.py blender_animated_ui-0.1.0-macos_arm64.zip
 ```
 
 Runtime validation should cover every declared host version and UI scale. The
@@ -863,21 +893,21 @@ host-application check.
   are possible.
 - Reuse the destination's existing auto-loader when it has one; never let two
   registration systems discover the same Blender class.
-- Merge manifest `network` and `files` permissions instead of replacing the
-  destination extension's existing permissions.
+- Merge manifest wheels plus `network` and `files` permissions instead of
+  replacing the destination extension's existing declarations.
 - Preserve every platform and Blender version already declared by the
   destination extension.
-- Keep runtime-installed dependencies and caches outside the installed source
-  and out of `auto_load.py` discovery.
+- Keep manifest wheels under `wheels/`; keep repair dependencies and caches
+  outside the installed source and out of `auto_load.py` discovery.
 - Preserve `LICENSE` and `THIRD_PARTY_NOTICES.md` with copied/distributed code.
 - Register RNA classes first, then properties, preview runtime, scheduler, and
   deferred library refresh in that order.
 - Unregister runtime services and properties in exact reverse order.
 - Keep panel draw memory-only and limit scheduler loads to bounded cache-frame
   batches.
-- Test JPEG and alpha WebP preview loading, operator RNA registration, reload,
-  disable/enable, cache refresh, mixed-rate playback, and full-range ingest in
-  every declared Blender series.
+- Test JPEG and alpha WebP preview loading, animated WebP ingestion, operator RNA
+  registration, reload, disable/enable, cache refresh, mixed-rate playback, and
+  full-range ingest in every declared Blender series.
 - Build and inspect the real ZIP, then install it through Blender's
   **Install from Disk** flow instead of testing only a source checkout.
 - Capability-gate any destination-specific Blender API difference and retain
@@ -885,8 +915,10 @@ host-application check.
 
 ## License and dependency notes
 
-The extension code is GPL-3.0-or-later. `imageio-ffmpeg` is installed at
-runtime from PyPI and is not redistributed in this source repository; it uses
-the BSD-2-Clause license. Its platform wheels include FFmpeg executables whose
-applicable configuration and license information are documented by the
-upstream project.
+The extension code is GPL-3.0-or-later. `imageio-ffmpeg` and Pillow are
+redistributed as unmodified PyPI wheels declared by `blender_manifest.toml`.
+imageio-ffmpeg uses BSD-2-Clause; Pillow uses MIT-CMU. The imageio platform
+wheels include FFmpeg executables whose applicable configuration and license
+information are documented by the upstream project. Run
+`python3 tools/sync_wheels.py --check` to verify every bundled artifact against
+its locked PyPI SHA-256 digest.

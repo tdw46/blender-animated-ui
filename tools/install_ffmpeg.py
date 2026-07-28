@@ -1,4 +1,4 @@
-"""Install the platform imageio-ffmpeg wheel with the active Python runtime."""
+"""Repair platform media wheels into extension-user storage."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REQUIREMENT = "imageio-ffmpeg==0.6.0"
+REQUIREMENTS = ("imageio-ffmpeg==0.6.0", "Pillow==12.3.0")
 
 
 def main() -> int:
@@ -30,7 +30,7 @@ def main() -> int:
         str(arguments.target),
         "--only-binary=:all:",
         "--no-cache-dir",
-        REQUIREMENT,
+        *REQUIREMENTS,
     ]
     return subprocess.run(command, check=False).returncode
 

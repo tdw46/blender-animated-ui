@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
+from .animated_webp import extract_animated_webp, inspect_animated_webp
 from .cache_format import (
     FrameRecord,
     build_uniform_records,
@@ -139,6 +140,24 @@ def _sequence_input_args(
     return ["-f", "concat", "-safe", "0", "-i", str(concat_path)]
 
 
+def _timed_frame_input_args(
+    source_paths: tuple[Path, ...],
+    durations_ms: tuple[int, ...],
+    staging_dir: Path,
+) -> list[str]:
+    if not source_paths or len(source_paths) != len(durations_ms):
+        raise ValueError("Timed frame paths and durations must match")
+    concat_path = staging_dir / "animated_webp.ffconcat"
+    lines = ["ffconcat version 1.0"]
+    for path, duration_ms in zip(source_paths, durations_ms, strict=True):
+        lines.append(f"file '{_escape_concat_path(path)}'")
+        lines.append(f"duration {max(1, duration_ms) / 1000.0:.9f}")
+    # The concat demuxer needs a final repeated file for the last duration.
+    lines.append(f"file '{_escape_concat_path(source_paths[-1])}'")
+    concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return ["-f", "concat", "-safe", "0", "-i", str(concat_path)]
+
+
 def _alpha_decoder_name(source_path: Path, probe: MediaProbe) -> str:
     """Return the decoder required to expose WebM's separate alpha stream."""
     if not probe.has_alpha or source_path.suffix.casefold() not in {".webm", ".mkv"}:
@@ -179,6 +198,17 @@ def probe_media(executable: str, source_path: str | Path) -> MediaProbe:
         raise FileNotFoundError(path)
     if not executable or not Path(executable).is_file():
         raise FileNotFoundError(f"FFmpeg executable is unavailable: {executable}")
+    animated_webp = inspect_animated_webp(path)
+    if animated_webp is not None:
+        return MediaProbe(
+            duration_seconds=animated_webp.duration_ms / 1000.0,
+            width=animated_webp.width,
+            height=animated_webp.height,
+            source_fps=animated_webp.source_fps,
+            has_alpha=animated_webp.has_alpha,
+            frame_count=animated_webp.frame_count,
+            video_codec="webp",
+        )
     probe = _ffmpeg_probe(executable, _single_input_args(path))
     if (
         probe.duration_seconds <= 0.0
@@ -283,6 +313,7 @@ def _build_conversion_plan(
     settings: MediaImportSettings,
     staging_dir: Path,
     image_profile_resolver: CacheImageProfileResolver,
+    dependency_directory: str | Path | None,
 ) -> _ConversionPlan:
     is_sequence = len(sources) > 1
     sequence_sources = _trimmed_sources(sources, settings) if is_sequence else ()
@@ -297,14 +328,34 @@ def _build_conversion_plan(
         )
         probe = _ffmpeg_probe(executable, input_args)
     else:
-        probe = probe_media(executable, sources[0])
-        decoder = _alpha_decoder_name(sources[0], probe)
-        if decoder and not _ffmpeg_decoder_available(executable, decoder):
-            raise RuntimeError(
-                f"FFmpeg decoder {decoder!r} is required to preserve "
-                f"{probe.video_codec.upper()} WebM transparency"
+        animated_webp = inspect_animated_webp(sources[0])
+        if animated_webp is not None:
+            extracted_frames = extract_animated_webp(
+                sources[0],
+                staging_dir / "animated_webp_frames",
+                dependency_directory=dependency_directory,
             )
-        input_args = _single_input_args(sources[0], decoder=decoder)
+            if len(extracted_frames) != animated_webp.frame_count:
+                raise RuntimeError(
+                    "Pillow did not preserve the animated WebP frame count: "
+                    f"expected {animated_webp.frame_count}, got "
+                    f"{len(extracted_frames)}"
+                )
+            input_args = _timed_frame_input_args(
+                extracted_frames,
+                animated_webp.durations_ms,
+                staging_dir,
+            )
+            probe = probe_media(executable, sources[0])
+        else:
+            probe = probe_media(executable, sources[0])
+            decoder = _alpha_decoder_name(sources[0], probe)
+            if decoder and not _ffmpeg_decoder_available(executable, decoder):
+                raise RuntimeError(
+                    f"FFmpeg decoder {decoder!r} is required to preserve "
+                    f"{probe.video_codec.upper()} WebM transparency"
+                )
+            input_args = _single_input_args(sources[0], decoder=decoder)
     if not is_sequence:
         source_duration_seconds = probe.duration_seconds
     source_fps = 0.0 if is_sequence else probe.source_fps
@@ -440,6 +491,7 @@ def ingest_media(
     trim_end_frame: int = 0,
     cache_directory: str | Path | None = None,
     image_profile_resolver: CacheImageProfileResolver | None = None,
+    dependency_directory: str | Path | None = None,
 ) -> IngestResult:
     """Convert media into an atomic timed-image cache.
 
@@ -459,6 +511,13 @@ def ingest_media(
     missing = tuple(path for path in sources if not path.is_file())
     if missing:
         raise FileNotFoundError(missing[0])
+    if len(sources) > 1 and any(
+        inspect_animated_webp(path) is not None for path in sources
+    ):
+        raise ValueError(
+            "Animated WebP files must be imported individually, not as still-image "
+            "sequence frames"
+        )
     if not executable or not Path(executable).is_file():
         raise FileNotFoundError(f"FFmpeg executable is unavailable: {executable}")
 
@@ -480,6 +539,7 @@ def ingest_media(
             settings,
             staging_dir,
             profile_resolver,
+            dependency_directory,
         )
         raw_frames = _run_conversion(executable, plan, staging_dir)
         records = _finalize_frame_records(

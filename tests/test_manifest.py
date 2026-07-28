@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ class ManifestTests(unittest.TestCase):
     def test_runtime_and_legal_files_exist(self) -> None:
         required = (
             "__init__.py",
+            "animated_webp.py",
             "auto_load.py",
             "blender_manifest.toml",
             "LICENSE",
@@ -44,6 +46,42 @@ class ManifestTests(unittest.TestCase):
             [name for name in required if not (ROOT / name).is_file()],
             [],
         )
+
+    def test_manifest_declares_complete_media_wheel_matrix(self) -> None:
+        declared = {Path(value).name for value in self.manifest.get("wheels", ())}
+        present = {path.name for path in (ROOT / "wheels").glob("*.whl")}
+        self.assertEqual(declared, present)
+        self.assertEqual(len(declared), 15)
+        imageio_wheels = {
+            name for name in declared if name.startswith("imageio_ffmpeg-")
+        }
+        pillow_wheels = {name for name in declared if name.startswith("pillow-")}
+        self.assertEqual(len(imageio_wheels), 5)
+        self.assertEqual(len(pillow_wheels), 10)
+        for platform_tag in (
+            "macosx_11_0_arm64",
+            "macosx_10_",
+            "manylinux_2_27_aarch64",
+            "manylinux_2_27_x86_64",
+            "win_amd64",
+        ):
+            with self.subTest(platform_tag=platform_tag):
+                matches = {name for name in pillow_wheels if platform_tag in name}
+                self.assertEqual(len(matches), 2)
+                self.assertTrue(any("-cp311-cp311-" in name for name in matches))
+                self.assertTrue(any("-cp313-cp313-" in name for name in matches))
+
+    def test_readme_uses_only_the_two_current_animated_previews(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        previews = re.findall(r"\((resources/[^)]+\.webp)\)", readme)
+        self.assertEqual(
+            previews,
+            [
+                "resources/blender-animated-thumbs-1.webp",
+                "resources/blender-animated-thumbs-2.webp",
+            ],
+        )
+        self.assertTrue(all((ROOT / path).is_file() for path in previews))
 
     def test_build_excludes_development_and_generated_files(self) -> None:
         exclusions = set(self.manifest["build"]["paths_exclude_pattern"])

@@ -37,20 +37,29 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "PACKAGE_PATH=%EXTENSION_DIR%\%EXTENSION_ID%-%EXTENSION_VERSION%.zip"
-if exist "%PACKAGE_PATH%" del /q "%PACKAGE_PATH%"
+if exist "%EXTENSION_DIR%\%EXTENSION_ID%-%EXTENSION_VERSION%.zip" (
+    del /q "%EXTENSION_DIR%\%EXTENSION_ID%-%EXTENSION_VERSION%.zip"
+)
+del /q "%EXTENSION_DIR%\%EXTENSION_ID%-%EXTENSION_VERSION%-*.zip" 2>nul
 
 "%BLENDER_PATH%" --background --factory-startup --command extension build ^
-    --source-dir "%EXTENSION_DIR%" --output-dir "%EXTENSION_DIR%"
+    --source-dir "%EXTENSION_DIR%" --output-dir "%EXTENSION_DIR%" ^
+    --split-platforms
 if errorlevel 1 (
     echo Build failed: Blender returned a nonzero exit code.
     exit /b 1
 )
 
-if not exist "%PACKAGE_PATH%" (
-    echo Build failed: expected package was not created.
+set "PACKAGE_COUNT=0"
+for %%P in ("%EXTENSION_DIR%\%EXTENSION_ID%-%EXTENSION_VERSION%-*.zip") do (
+    if exist "%%~fP" (
+        set /a PACKAGE_COUNT+=1
+        echo Built: %%~fP
+    )
+)
+if "%PACKAGE_COUNT%"=="0" (
+    echo Build failed: no platform packages were created.
     exit /b 1
 )
 
-echo Built: %PACKAGE_PATH%
 exit /b 0
