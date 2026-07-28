@@ -21,6 +21,8 @@ if not hasattr(bpy.types.WindowManager, "animthumb_optimized_playback"):
     raise RuntimeError("Optimized playback setting did not register")
 if not hasattr(bpy.types.WindowManager, "animthumb_preview_fps"):
     raise RuntimeError("Preview frame-rate setting did not register")
+if not hasattr(bpy.types.WindowManager, "animthumb_preview_ram_budget_mb"):
+    raise RuntimeError("Preview RAM budget setting did not register")
 if not hasattr(bpy.types.WindowManager, "animthumb_gallery_search"):
     raise RuntimeError("Gallery search setting did not register")
 if not hasattr(bpy.types.WindowManager, "animthumb_gallery_media_type"):
@@ -81,6 +83,7 @@ wm.animthumb_gallery_media_type = "MP4"
 wm.animthumb_gallery_sort = "NAME_ASC"
 wm.animthumb_thumbnail_scale = 4.0
 wm.animthumb_preview_fps = 60
+wm.animthumb_preview_ram_budget_mb = 512
 wm.animthumb_optimized_playback = True
 scene.animthumb_gallery_page = 2
 reset_result = set(bpy.ops.animthumb.reset_gallery_settings())
@@ -96,6 +99,8 @@ if float(wm.animthumb_thumbnail_scale) != 1.0:
     raise RuntimeError("Gallery reset did not restore the 1.0 scale")
 if int(wm.animthumb_preview_fps) != 10:
     raise RuntimeError("Gallery reset did not restore the playback FPS")
+if int(wm.animthumb_preview_ram_budget_mb) != 32:
+    raise RuntimeError("Gallery reset did not restore the preview RAM budget")
 if bool(wm.animthumb_optimized_playback):
     raise RuntimeError("Gallery reset did not disable optimized playback")
 if int(scene.animthumb_gallery_page) != 0:
@@ -119,6 +124,7 @@ print(
         "gallery_query": True,
         "preview_fps": int(bpy.context.window_manager.animthumb_preview_fps),
         "preview_fps_max": int(fps_property.hard_max),
+        "preview_ram_budget_mb": int(wm.animthumb_preview_ram_budget_mb),
     },
 )
 
@@ -127,4 +133,6 @@ if hasattr(bpy.types.Scene, "animthumb_items"):
     raise RuntimeError("Animated thumbnail Scene collection did not unregister")
 if hasattr(bpy.types.WindowManager, "animthumb_preview_fps"):
     raise RuntimeError("Preview frame-rate setting did not unregister")
+if hasattr(bpy.types.WindowManager, "animthumb_preview_ram_budget_mb"):
+    raise RuntimeError("Preview RAM budget setting did not unregister")
 print("ANIMTHUMB_SMOKE_UNREGISTERED", True)

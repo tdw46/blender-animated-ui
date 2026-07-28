@@ -10,6 +10,9 @@ from bpy.utils import previews
 
 from .cache_format import FrameRecord, read_metadata
 from .constants import (
+    MAX_THUMBNAIL_EDGE,
+    PREVIEW_DECODED_BYTES_PER_PIXEL,
+    PREVIEW_FRAME_SETTLE_SECONDS,
     PREVIEW_LOAD_BATCH_INTERVAL_SECONDS,
     PREVIEW_LOAD_BATCH_SIZE,
     PREVIEW_LOOKAHEAD_FRAMES,
@@ -35,6 +38,11 @@ class CachedPreview:
     poster_index: int
     loaded_indices: set[int]
     reachable_indices_by_fps: dict[float | None, tuple[int, ...]]
+    frame_bytes: dict[int, int]
+    last_access_monotonic_by_index: dict[int, float]
+    loaded_at_monotonic_by_index: dict[int, float]
+    ever_loaded_indices: set[int]
+    last_displayed_index: int | None
 
     @property
     def icon_keys(self) -> tuple[str, ...]:
@@ -49,6 +57,14 @@ _COLLECTION = None
 _ITEMS: dict[str, CachedPreview] = {}
 _LAST_VISIBLE_MONOTONIC: dict[str, float] = {}
 _LAST_PRELOAD_MONOTONIC = 0.0
+_FRAME_LOAD_COUNT = 0
+_FRAME_RELOAD_COUNT = 0
+_BUDGET_EVICTION_COUNT = 0
+_CURRENT_FRAME_RELOAD_COUNT = 0
+_DRAW_FRAME_RELOAD_COUNT = 0
+_DISPLAY_FALLBACK_COUNT = 0
+_LAST_REQUESTED_BUDGET_BYTES = 0
+_LAST_EFFECTIVE_BUDGET_BYTES = 0
 
 
 def _icon_key(item_id: str, frame_index: int) -> str:
@@ -73,6 +89,7 @@ def unregister_runtime() -> None:
         except Exception:
             pass
     _COLLECTION = None
+    _reset_statistics()
 
 
 def clear() -> None:
@@ -85,6 +102,26 @@ def clear() -> None:
             _COLLECTION.clear()
         except Exception:
             pass
+    _reset_statistics()
+
+
+def _reset_statistics() -> None:
+    global _FRAME_LOAD_COUNT
+    global _FRAME_RELOAD_COUNT
+    global _BUDGET_EVICTION_COUNT
+    global _CURRENT_FRAME_RELOAD_COUNT
+    global _DRAW_FRAME_RELOAD_COUNT
+    global _DISPLAY_FALLBACK_COUNT
+    global _LAST_REQUESTED_BUDGET_BYTES
+    global _LAST_EFFECTIVE_BUDGET_BYTES
+    _FRAME_LOAD_COUNT = 0
+    _FRAME_RELOAD_COUNT = 0
+    _BUDGET_EVICTION_COUNT = 0
+    _CURRENT_FRAME_RELOAD_COUNT = 0
+    _DRAW_FRAME_RELOAD_COUNT = 0
+    _DISPLAY_FALLBACK_COUNT = 0
+    _LAST_REQUESTED_BUDGET_BYTES = 0
+    _LAST_EFFECTIVE_BUDGET_BYTES = 0
 
 
 def unload_item(item_id: str) -> None:
@@ -125,7 +162,10 @@ def _record_for_index(cached: CachedPreview, frame_index: int) -> FrameRecord | 
 
 
 def _load_frame(cached: CachedPreview, frame_index: int) -> bool:
+    global _FRAME_LOAD_COUNT
+    global _FRAME_RELOAD_COUNT
     if frame_index in cached.loaded_indices:
+        cached.last_access_monotonic_by_index[frame_index] = monotonic()
         return True
     record = _record_for_index(cached, frame_index)
     if record is None:
@@ -136,7 +176,7 @@ def _load_frame(cached: CachedPreview, frame_index: int) -> bool:
     try:
         if key in _COLLECTION:
             del _COLLECTION[key]
-        _COLLECTION.load(key, str(record.path), "IMAGE")
+        preview = _COLLECTION.load(key, str(record.path), "IMAGE")
     except Exception as error:
         print(
             "Animated thumbnails: could not load preview frame",
@@ -147,14 +187,40 @@ def _load_frame(cached: CachedPreview, frame_index: int) -> bool:
             },
         )
         return False
+    image_size = tuple(int(value) for value in getattr(preview, "image_size", ()))
+    if len(image_size) == 2 and image_size[0] > 0 and image_size[1] > 0:
+        cached.frame_bytes[record.index] = (
+            image_size[0] * image_size[1] * PREVIEW_DECODED_BYTES_PER_PIXEL
+        )
+    else:
+        cached.frame_bytes[record.index] = (
+            MAX_THUMBNAIL_EDGE * MAX_THUMBNAIL_EDGE * PREVIEW_DECODED_BYTES_PER_PIXEL
+        )
+    if record.index in cached.ever_loaded_indices:
+        _FRAME_RELOAD_COUNT += 1
+    cached.ever_loaded_indices.add(record.index)
+    loaded_at = monotonic()
     cached.loaded_indices.add(record.index)
+    cached.last_access_monotonic_by_index[record.index] = loaded_at
+    cached.loaded_at_monotonic_by_index[record.index] = loaded_at
+    _FRAME_LOAD_COUNT += 1
     return True
 
 
-def _unload_frame(cached: CachedPreview, frame_index: int) -> None:
+def _unload_frame(
+    cached: CachedPreview,
+    frame_index: int,
+    *,
+    budget_eviction: bool = False,
+) -> None:
+    global _BUDGET_EVICTION_COUNT
     if frame_index not in cached.loaded_indices:
         return
     cached.loaded_indices.discard(frame_index)
+    cached.last_access_monotonic_by_index.pop(frame_index, None)
+    cached.loaded_at_monotonic_by_index.pop(frame_index, None)
+    if budget_eviction:
+        _BUDGET_EVICTION_COUNT += 1
     if _COLLECTION is None:
         return
     key = _icon_key(cached.item_id, frame_index)
@@ -256,6 +322,11 @@ def load_item(
         poster_index=records[0].index,
         loaded_indices=set(),
         reachable_indices_by_fps={},
+        frame_bytes={},
+        last_access_monotonic_by_index={},
+        loaded_at_monotonic_by_index={},
+        ever_loaded_indices=set(),
+        last_displayed_index=None,
     )
     _ITEMS[item_id] = cached
     poster_index = _frame_index_for_cached(cached, now_ms, fps_limit)
@@ -375,15 +446,34 @@ def icon_id(
     *,
     fps_limit: int | float | None = None,
 ) -> int:
+    global _DRAW_FRAME_RELOAD_COUNT
+    global _DISPLAY_FALLBACK_COUNT
     cached = _ITEMS.get(str(item_id))
     if cached is None or _COLLECTION is None:
         return 0
     index = frame_index(item_id, now_ms, fps_limit=fps_limit)
+    if index not in cached.loaded_indices and index in cached.ever_loaded_indices:
+        _DRAW_FRAME_RELOAD_COUNT += 1
     _load_frame(cached, index)
-    key = _icon_key(item_id, index)
+    display_index = index
+    loaded_at = cached.loaded_at_monotonic_by_index.get(index, 0.0)
+    fallback_index = cached.last_displayed_index
+    if (
+        loaded_at > 0.0
+        and monotonic() - loaded_at < PREVIEW_FRAME_SETTLE_SECONDS
+        and fallback_index is not None
+        and fallback_index != index
+        and fallback_index in cached.loaded_indices
+    ):
+        display_index = fallback_index
+        _DISPLAY_FALLBACK_COUNT += 1
+    key = _icon_key(item_id, display_index)
     try:
         if key in _COLLECTION:
-            return max(0, int(getattr(_COLLECTION[key], "icon_id", 0) or 0))
+            icon_value = max(0, int(getattr(_COLLECTION[key], "icon_id", 0) or 0))
+            if display_index == index:
+                cached.last_displayed_index = index
+            return icon_value
     except Exception:
         pass
     try:
@@ -408,10 +498,203 @@ def _rotated_reachable_indices(
     return tuple(reachable[start:] + reachable[:start])
 
 
-def _trim_to_indices(cached: CachedPreview, retained: set[int]) -> None:
+def _trim_to_indices(
+    cached: CachedPreview,
+    retained: set[int],
+    *,
+    budget_eviction: bool = False,
+) -> None:
     for index in tuple(cached.loaded_indices):
         if index not in retained:
-            _unload_frame(cached, index)
+            _unload_frame(
+                cached,
+                index,
+                budget_eviction=budget_eviction,
+            )
+
+
+def _loaded_frame_bytes(cached: CachedPreview, frame_index: int) -> int:
+    return max(
+        1,
+        int(
+            cached.frame_bytes.get(
+                frame_index,
+                MAX_THUMBNAIL_EDGE
+                * MAX_THUMBNAIL_EDGE
+                * PREVIEW_DECODED_BYTES_PER_PIXEL,
+            )
+        ),
+    )
+
+
+def estimated_memory_bytes() -> int:
+    return sum(
+        _loaded_frame_bytes(cached, frame_index)
+        for cached in _ITEMS.values()
+        for frame_index in cached.loaded_indices
+    )
+
+
+def pagination_memory_estimate() -> dict[str, int]:
+    """Return conservative decoded-frame costs for adaptive gallery paging."""
+    fallback_bytes = (
+        MAX_THUMBNAIL_EDGE * MAX_THUMBNAIL_EDGE * PREVIEW_DECODED_BYTES_PER_PIXEL
+    )
+    largest_frame_bytes = max(
+        (
+            max(cached.frame_bytes.values(), default=fallback_bytes)
+            for cached in _ITEMS.values()
+        ),
+        default=fallback_bytes,
+    )
+    resident_poster_bytes = sum(
+        _loaded_frame_bytes(cached, cached.poster_index)
+        for cached in _ITEMS.values()
+        if cached.poster_index in cached.loaded_indices
+    )
+    return {
+        "largest_frame_bytes": largest_frame_bytes,
+        "resident_poster_bytes": resident_poster_bytes,
+    }
+
+
+def memory_stats() -> dict[str, int | float]:
+    loaded_frames = sum(len(cached.loaded_indices) for cached in _ITEMS.values())
+    estimated_bytes = estimated_memory_bytes()
+    return {
+        "loaded_frames": loaded_frames,
+        "estimated_bytes": estimated_bytes,
+        "estimated_mebibytes": estimated_bytes / (1024.0 * 1024.0),
+        "requested_budget_bytes": _LAST_REQUESTED_BUDGET_BYTES,
+        "requested_budget_mebibytes": (
+            _LAST_REQUESTED_BUDGET_BYTES / (1024.0 * 1024.0)
+        ),
+        "effective_budget_bytes": _LAST_EFFECTIVE_BUDGET_BYTES,
+        "effective_budget_mebibytes": (
+            _LAST_EFFECTIVE_BUDGET_BYTES / (1024.0 * 1024.0)
+        ),
+        "frame_loads": _FRAME_LOAD_COUNT,
+        "frame_reloads": _FRAME_RELOAD_COUNT,
+        "budget_evictions": _BUDGET_EVICTION_COUNT,
+        "current_frame_reloads": _CURRENT_FRAME_RELOAD_COUNT,
+        "draw_frame_reloads": _DRAW_FRAME_RELOAD_COUNT,
+        "display_fallbacks": _DISPLAY_FALLBACK_COUNT,
+    }
+
+
+def enforce_ram_budget(
+    active_item_ids: tuple[str, ...],
+    now_ms: int,
+    *,
+    fps_limit: int | float | None,
+    ram_budget_bytes: int | None,
+) -> int:
+    """Evict least-recently-used surplus frames while retaining playback windows."""
+    global _LAST_EFFECTIVE_BUDGET_BYTES
+    global _LAST_REQUESTED_BUDGET_BYTES
+    if ram_budget_bytes is None:
+        _LAST_REQUESTED_BUDGET_BYTES = 0
+        _LAST_EFFECTIVE_BUDGET_BYTES = 0
+        return 0
+    requested_budget = max(1, int(ram_budget_bytes))
+    _LAST_REQUESTED_BUDGET_BYTES = requested_budget
+
+    active_ids = tuple(dict.fromkeys(str(item_id) for item_id in active_item_ids))
+    active_set = set(active_ids)
+    protected: set[tuple[str, int]] = set()
+    for cached in _ITEMS.values():
+        if cached.poster_index in cached.loaded_indices:
+            protected.add((cached.item_id, cached.poster_index))
+        if (
+            cached.last_displayed_index is not None
+            and cached.last_displayed_index in cached.loaded_indices
+        ):
+            protected.add((cached.item_id, cached.last_displayed_index))
+    for item_id in active_ids:
+        cached = _ITEMS.get(item_id)
+        if cached is None:
+            continue
+        current_index = _frame_index_for_cached(cached, now_ms, fps_limit)
+        ordered = _rotated_reachable_indices(cached, current_index, fps_limit)
+        protected_indices = {current_index}
+        protected_indices.update(ordered[: PREVIEW_LOOKAHEAD_FRAMES + 1])
+        for frame_index in protected_indices:
+            if frame_index in cached.loaded_indices:
+                protected.add((cached.item_id, frame_index))
+                cached.last_access_monotonic_by_index[frame_index] = monotonic()
+
+    minimum_working_set_bytes = sum(
+        _loaded_frame_bytes(_ITEMS[item_id], frame_index)
+        for item_id, frame_index in protected
+        if item_id in _ITEMS and frame_index in _ITEMS[item_id].loaded_indices
+    )
+    resolved_budget = max(requested_budget, minimum_working_set_bytes)
+    _LAST_EFFECTIVE_BUDGET_BYTES = resolved_budget
+    current_bytes = estimated_memory_bytes()
+    if current_bytes <= resolved_budget:
+        return 0
+
+    candidates = sorted(
+        (
+            (
+                1 if cached.item_id in active_set else 0,
+                cached.last_access_monotonic_by_index.get(frame_index, 0.0),
+                cached.item_id,
+                frame_index,
+            )
+            for cached in _ITEMS.values()
+            for frame_index in cached.loaded_indices
+            if (cached.item_id, frame_index) not in protected
+        ),
+        key=lambda candidate: (
+            candidate[0],
+            candidate[1],
+            candidate[2],
+            candidate[3],
+        ),
+    )
+    evicted = 0
+    for _active_rank, _last_access, item_id, frame_index in candidates:
+        if current_bytes <= resolved_budget:
+            break
+        cached = _ITEMS.get(item_id)
+        if cached is None or frame_index not in cached.loaded_indices:
+            continue
+        current_bytes -= _loaded_frame_bytes(cached, frame_index)
+        _unload_frame(cached, frame_index, budget_eviction=True)
+        evicted += 1
+    return evicted
+
+
+def _active_resident_frame_limit(
+    visible: list[tuple[CachedPreview, int, tuple[int, ...]]],
+    ram_budget_bytes: int | None,
+) -> int | None:
+    if ram_budget_bytes is None or not visible:
+        return None
+    fallback_bytes = (
+        MAX_THUMBNAIL_EDGE * MAX_THUMBNAIL_EDGE * PREVIEW_DECODED_BYTES_PER_PIXEL
+    )
+    largest_frame_bytes = max(
+        (
+            max(cached.frame_bytes.values(), default=fallback_bytes)
+            for cached in _ITEMS.values()
+        ),
+        default=fallback_bytes,
+    )
+    total_slots = max(1, int(ram_budget_bytes) // max(1, largest_frame_bytes))
+    active_ids = {cached.item_id for cached, _current, _ordered in visible}
+    offscreen_poster_slots = sum(
+        1
+        for cached in _ITEMS.values()
+        if cached.item_id not in active_ids
+        and cached.poster_index in cached.loaded_indices
+    )
+    active_slots = max(1, total_slots - offscreen_poster_slots)
+    return max(
+        PREVIEW_LOOKAHEAD_FRAMES + 1,
+        active_slots // max(1, len(visible)),
+    )
 
 
 def service_visible_items(
@@ -420,9 +703,11 @@ def service_visible_items(
     *,
     fps_limit: int | float | None,
     now_monotonic: float | None = None,
+    ram_budget_bytes: int | None = None,
 ) -> int:
     """Queue current/look-ahead frames, then gradually fill reachable frames."""
     global _LAST_PRELOAD_MONOTONIC
+    global _CURRENT_FRAME_RELOAD_COUNT
     current_monotonic = monotonic() if now_monotonic is None else now_monotonic
     visible: list[tuple[CachedPreview, int, tuple[int, ...]]] = []
     for item_id in dict.fromkeys(item_ids):
@@ -431,24 +716,71 @@ def service_visible_items(
             continue
         _LAST_VISIBLE_MONOTONIC[cached.item_id] = current_monotonic
         current_index = _frame_index_for_cached(cached, now_ms, fps_limit)
+        if (
+            current_index not in cached.loaded_indices
+            and current_index in cached.ever_loaded_indices
+        ):
+            _CURRENT_FRAME_RELOAD_COUNT += 1
         _load_frame(cached, current_index)
         ordered = _rotated_reachable_indices(cached, current_index, fps_limit)
-        retained = set(ordered)
+        visible.append((cached, current_index, ordered))
+
+    resident_limit = _active_resident_frame_limit(visible, ram_budget_bytes)
+    bounded_visible: list[tuple[CachedPreview, int, tuple[int, ...]]] = []
+    for cached, current_index, ordered in visible:
+        bounded_ordered = (
+            ordered if resident_limit is None else ordered[: max(1, resident_limit)]
+        )
+        retained = set(bounded_ordered)
         retained.add(cached.poster_index)
         retained.add(current_index)
-        _trim_to_indices(cached, retained)
-        visible.append((cached, current_index, ordered))
+        if cached.last_displayed_index is not None:
+            retained.add(cached.last_displayed_index)
+        _trim_to_indices(
+            cached,
+            retained,
+            budget_eviction=resident_limit is not None,
+        )
+        bounded_visible.append((cached, current_index, bounded_ordered))
+    visible = bounded_visible
+
+    loaded_count = 0
+    for cached, _current_index, ordered in visible:
+        for frame_index in ordered[1 : PREVIEW_LOOKAHEAD_FRAMES + 1]:
+            if frame_index not in cached.loaded_indices and _load_frame(
+                cached, frame_index
+            ):
+                loaded_count += 1
 
     if (
         current_monotonic - _LAST_PRELOAD_MONOTONIC
         < PREVIEW_LOAD_BATCH_INTERVAL_SECONDS
     ):
-        return 0
+        enforce_ram_budget(
+            item_ids,
+            now_ms,
+            fps_limit=fps_limit,
+            ram_budget_bytes=ram_budget_bytes,
+        )
+        return loaded_count
     _LAST_PRELOAD_MONOTONIC = current_monotonic
     candidates: list[tuple[CachedPreview, int]] = []
     seen_candidates: set[tuple[str, int]] = set()
+    expected_consumed_frames = int(
+        sum(
+            active_display_fps(
+                cached.effective_fps,
+                source_fps=cached.source_fps,
+                requested_fps=fps_limit,
+            )
+            for cached, _current, _ordered in visible
+        )
+        * PREVIEW_LOAD_BATCH_INTERVAL_SECONDS
+        + 0.999
+    )
+    preload_batch_size = PREVIEW_LOAD_BATCH_SIZE + expected_consumed_frames
     max_depth = max((len(ordered) for _cached, _current, ordered in visible), default=0)
-    for depth in range(1, max_depth):
+    for depth in range(PREVIEW_LOOKAHEAD_FRAMES + 1, max_depth):
         for cached, _current_index, ordered in visible:
             if depth >= len(ordered):
                 continue
@@ -458,16 +790,18 @@ def service_visible_items(
                 continue
             candidates.append((cached, index))
             seen_candidates.add(key)
-        if (
-            depth >= PREVIEW_LOOKAHEAD_FRAMES
-            and len(candidates) >= PREVIEW_LOAD_BATCH_SIZE
-        ):
+        if depth >= PREVIEW_LOOKAHEAD_FRAMES and len(candidates) >= preload_batch_size:
             break
 
-    loaded_count = 0
-    for cached, index in candidates[:PREVIEW_LOAD_BATCH_SIZE]:
+    for cached, index in candidates[:preload_batch_size]:
         if _load_frame(cached, index):
             loaded_count += 1
+    enforce_ram_budget(
+        item_ids,
+        now_ms,
+        fps_limit=fps_limit,
+        ram_budget_bytes=ram_budget_bytes,
+    )
     return loaded_count
 
 

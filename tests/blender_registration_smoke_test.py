@@ -45,6 +45,7 @@ try:
     wm.animthumb_gallery_sort = "NAME_ASC"
     wm.animthumb_thumbnail_scale = 4.0
     wm.animthumb_preview_fps = 60
+    wm.animthumb_preview_ram_budget_mb = 512
     wm.animthumb_optimized_playback = True
     scene.animthumb_gallery_page = 2
     reset_result = set(bpy.ops.animthumb.reset_gallery_settings())
@@ -56,6 +57,7 @@ try:
         or wm.animthumb_gallery_sort != "DATE_ADDED_DESC"
         or float(wm.animthumb_thumbnail_scale) != 1.0
         or int(wm.animthumb_preview_fps) != 10
+        or int(wm.animthumb_preview_ram_budget_mb) != 32
         or bool(wm.animthumb_optimized_playback)
         or int(scene.animthumb_gallery_page) != 0
     ):
@@ -71,6 +73,7 @@ try:
                 float(scale_property.hard_max),
             ],
             "gallery_reset": True,
+            "preview_ram_budget_mb": int(wm.animthumb_preview_ram_budget_mb),
             "rename_operator": True,
             "imported_name_fields": True,
         },

@@ -14,11 +14,13 @@ The playback architecture provides:
 - one guarded modal scheduler for every visible thumbnail;
 - source-duration-aware frame boundaries;
 - one shared Blender preview collection;
-- no filesystem access in the playback hot path;
+- bounded, incremental frame warming from the generated cache;
+- a 32 MiB default preview-RAM target with an automatic protected working set;
+- adaptive pagination sized from the RAM target and decoded-frame cost;
 - only the visible gallery page advances;
 - only the N-panel UI regions that drew the gallery are redrawn;
-- a settings cog with thumbnail sizing, an 8–60 FPS live ceiling, and opt-in
-  optimized playback;
+- a settings cog with thumbnail sizing, RAM control, an 8–60 FPS live ceiling,
+  and opt-in optimized playback;
 - viewport, timeline, and gallery-scroll pausing that matches the Beyond VRM
   behavior;
 - missed mouse-release repair on Windows and macOS; and
@@ -47,6 +49,30 @@ beneath any card to rebuild it with new settings and an editable imported name,
 rename it without rebuilding, open its cache directory, or delete it.
 
 ![Importing animated media, opening its item actions, and renaming the thumbnail](<resources/Blender Animated Thumbnails 3.webp>)
+
+The gallery targets 32 MiB of decoded preview RAM by default. It automatically
+paginates large libraries so each visible animated thumbnail can keep a useful
+playback window warm. Use the numbered buttons at the bottom to change pages,
+`<<` to return to the first page, and `>>` to jump to the last page. Every
+control uses the same DPI-aware width and wraps into additional rows when the
+N-panel cannot fit the complete sequence.
+
+For planning an integration, allow at least five resident decoded frames per
+visible animated item: the current frame, two frames of look-ahead, the
+last-ready handoff, and one frame of headroom. The supplied paginator applies
+that conservative rule after reserving one warm poster for every library item.
+It is a safe sizing guideline rather than a timing guarantee; playback FPS,
+storage speed, host load, and Blender's own preview overhead still matter.
+
+Switching to another N-panel tab stops animation and redraw work but keeps the
+last active page's resident frames warm for a quick return. Other gallery pages
+retain one poster per item. Changing the page or filters replaces the warm page
+set instead of refreshing unrelated media.
+
+When an evicted frame needs to return, an existing thumbnail holds its
+last-ready image while the frame settles. Newly imported media still uses
+Blender's normal loading indicator until its first display frame is ready, so
+the UI continues to distinguish a genuine first load from a background refill.
 
 On the first ingest, the extension can install the platform-specific
 `imageio-ffmpeg` 0.6.0 wheel into persistent extension-user storage. The wheel
@@ -108,6 +134,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `media_selection.py` | Default imported-name derivation and deterministic sequence ordering | None |
 | `gallery_settings.py` | Shared cog defaults and thumbnail-scale calculation | None |
 | `gallery_query.py` | Source-type classification, name filtering, and date/name sorting | None |
+| `gallery_pagination.py` | RAM-aware page sizing, page bounds, and equal-width wrapped controls | None |
 | `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
@@ -115,7 +142,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | Blender path helpers and Python subprocesses |
 | `paths.py` | Persistent extension-user cache/dependency paths | `bpy.utils` |
 | `preferences.py` | Optional custom cache-root preference | Blender RNA |
-| `preview_cache.py` | Load frames once and answer memory-only icon/timing queries | `bpy.utils.previews` |
+| `preview_cache.py` | Warm, retain, and evict decoded frames; answer icon/timing queries | `bpy.utils.previews` |
 | `preview_engine.py` | Visible-only modal scheduler, optimized mode, watchdog | Blender runtime |
 | `properties.py` | Scene library items and WindowManager UI settings | Blender RNA |
 | `library.py` | Scan persistent caches into Scene collections | Blender RNA |
@@ -142,6 +169,7 @@ your_extension/
 ├── media_selection.py          # pure image-sequence ordering
 ├── gallery_settings.py         # pure gallery defaults and scale math
 ├── gallery_query.py            # pure gallery filtering and sorting
+├── gallery_pagination.py       # pure RAM-aware pagination
 ├── media_settings.py           # pure import settings and estimates
 ├── media_types.py              # typed conversion profiles/results
 ├── paths.py
@@ -167,13 +195,14 @@ your_extension/
 
 ```mermaid
 flowchart LR
-    UI["ui_gallery.py<br/>visible page"] --> PC["preview_cache.py<br/>memory-only icon lookup"]
+    UI["ui_gallery.py<br/>visible page"] --> PC["preview_cache.py<br/>bounded frame working set"]
     UI --> PE["preview_engine.py<br/>one modal scheduler"]
     PE --> PC
     PE --> R["Targeted UI-region redraw"]
     PC --> FPS["frame_rate.py<br/>shared FPS policy"]
     UI --> GS["gallery_settings.py<br/>defaults and thumbnail sizing"]
     UI --> GQ["gallery_query.py<br/>filter and sort"]
+    UI --> GP["gallery_pagination.py<br/>RAM-aware visible page"]
 
     OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
     OP --> MS["media_settings.py<br/>shared analysis"]
@@ -193,7 +222,7 @@ Copy the smallest profile that matches the destination extension:
 
 | Profile | Required modules | Use when |
 | --- | --- | --- |
-| Playback only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
+| Playback only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `gallery_pagination.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
 | Ingest only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
 | Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
 
@@ -236,6 +265,7 @@ ffmpeg_bridge.py
 frame_rate.py
 gallery_settings.py
 gallery_query.py
+gallery_pagination.py
 media_probe.py
 media_selection.py
 media_settings.py
@@ -311,11 +341,16 @@ beginning with `_` are implementation details and may move between modules.
 | `media_ingest.probe_media(executable, source_path)` | Read native FPS, dimensions, duration, alpha, and frame count | FFmpeg executable; no Blender requirement |
 | `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
 | `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
-| `gallery_settings.DEFAULT_GALLERY_SETTINGS` | Shared search, filter, sort, size, FPS, and optimized-mode defaults | None |
+| `gallery_settings.DEFAULT_GALLERY_SETTINGS` | Shared search, filter, sort, size, FPS, RAM, and optimized-mode defaults | None |
 | `gallery_settings.normalized_thumbnail_scale(value)` | Convert the Thumbnail Scale setting to the icon multiplier used by the gallery | None |
 | `gallery_query.GalleryQuery` | Immutable search, media-type, and sort settings | None |
 | `gallery_query.source_media_type(source_paths, is_sequence=False)` | Classify imported media from its source extension | None |
 | `gallery_query.filter_and_sort_media(items, query)` | Compose name search, source-type filtering, and date/name sorting | None |
+| `gallery_pagination.adaptive_page_size(...)` | Size a page from its RAM target, decoded-frame cost, and resident posters | None |
+| `gallery_pagination.page_bounds(...)` | Resolve the stable slice for a zero-based gallery page | None |
+| `gallery_pagination.pagination_layout_metrics(...)` | Calculate equal-width page-button columns from region width and UI scale | None |
+| `gallery_pagination.pagination_buttons(...)` | Describe first, numbered, and last-page controls without Blender UI types | None |
+| `gallery_pagination.pagination_button_rows(...)` | Wrap page controls into renderer-independent rows | None |
 | `media_selection.default_media_name(source_paths)` | Derive the same default Imported Name used by UI and ingest | None |
 | `media_settings.MediaImportSettings` | Immutable import, sequence-order, and trim settings | None |
 | `media_settings.MediaAnalysis` | Immutable probe information shared by UIs | None |
@@ -325,9 +360,10 @@ beginning with `_` are implementation details and may move between modules.
 | `cache_format.read_metadata(cache_dir)` | Validate schema and timed frame files | None |
 | `cache_format.update_metadata_name(cache_dir, name)` | Atomically rename a cache without rebuilding frames | None |
 | `library.rename_item(item_id, name)` | Rename a discovered cache and refresh Scene libraries | Blender main thread |
-| `preview_cache.load_item(item, force=False)` | Load one cache into the shared preview collection | Blender main thread |
+| `preview_cache.load_item(item, force=False)` | Register one cache and warm its current poster | Blender main thread |
 | `preview_cache.icon_id(item_id, now_ms, fps_limit=None)` | Resolve the current in-memory preview icon | Blender main thread |
 | `preview_cache.next_interval_seconds(item_ids, now_ms, fps_limit=None)` | Find the earliest real boundary for visible items | Blender main thread |
+| `preview_cache.pagination_memory_estimate()` | Report decoded-frame and resident-poster costs for page sizing | Blender main thread |
 | `preview_engine.register_ui_region(context, item_ids)` | Declare exactly what a gallery region drew | Blender panel draw/main thread |
 | `preview_engine.schedule_start()` | Ensure the shared scheduler is running | Blender main thread |
 | `properties.reset_gallery_settings(context)` | Restore every settings-cog default and first page | Blender main thread |
@@ -396,9 +432,10 @@ preview_engine.register_ui_region(context, visible_ids)
 preview_engine.schedule_start()
 ```
 
-That visibility registration is essential. It is what prevents off-screen
-pages, closed panels, unrelated windows, and stale regions from generating
-frame work or redraw traffic.
+That visibility registration is essential. It prevents off-screen pages,
+closed panels, unrelated windows, and stale regions from advancing frames or
+generating redraw traffic. Their poster frames remain warm for immediate
+display when the page or N-panel tab returns.
 
 ## Using only the ingest library
 
@@ -714,17 +751,15 @@ rebuild it deliberately.
 
 ## Playback performance contract
 
-The fast path—panel redraw and modal `TIMER` events—must remain memory-only:
+Panel draw remains a memory lookup after the scheduler has warmed the current
+window. The modal scheduler may incrementally load bounded frame batches from
+an already generated cache to maintain that window. Neither path performs
+directory scans, metadata reads, cache generation, or full-area/full-viewport
+redraws.
 
-- no directory scans;
-- no metadata reads;
-- no image decode;
-- no preview loads;
-- no cache generation; and
-- no full-area or full-viewport redraw.
-
-Disk work belongs in ingest, refresh, deletion, load-post rebuild, or the first
-visible-item load.
+Ingest, refresh, deletion, and load-post rebuild own structural disk work.
+Incremental preview loads are scheduled and RAM-bounded; they are not triggered
+by unrelated media cards during panel draw.
 
 The settings-cog popover exposes:
 
@@ -735,16 +770,28 @@ The settings-cog popover exposes:
   column wrapping. It defaults to 1.0 and supports values from 0.5 through 4.0;
 - **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
   and updates each card’s active FPS label from 8 through 60 FPS;
+- **Preview RAM Budget**, a 16–2,048 MiB target that defaults to 32 MiB. The
+  gallery reduces its adaptive page size when the target cannot hold five
+  decoded frames per visible item after resident posters are reserved. The
+  settings popover reports the currently loaded MiB and decoded-frame count;
 - **Optimized Playback Mode**, which pauses only for timeline playback,
   `(recent depsgraph activity AND real viewport drag/transform)`, or scrolling
   inside the owning preview UI region; and
 - **Reset Settings**, which restores search, media-type filter, sort, thumbnail
-  size, live FPS, optimized playback, and the first gallery page.
+  size, live FPS, RAM target, optimized playback, and the first gallery page.
 
 ![Filtering, sorting, rescaling, and limiting live playback FPS from the gallery settings cog](<resources/Blender Animated Thumbnails 2.webp>)
 
 Plain mouse movement, background depsgraph chatter, clicks elsewhere, and
 scrolling outside the gallery do not renew a pause.
+
+The RAM value is a target, not a hard failure boundary. Current frames,
+two-frame look-ahead, poster frames, and the last displayed handoff are
+protected from eviction. If those frames alone exceed the selected value, the
+runtime temporarily uses that minimum and the settings popover reports the
+larger **Protected working set**. Increasing the slider allows longer playback
+windows and more cards per page; lowering it favors a smaller warm set and can
+immediately add pages without rebuilding any media.
 
 Changing the preview rate does not decode or regenerate anything in the panel
 draw path. Lower values immediately reduce redraw pressure for existing
@@ -800,7 +847,8 @@ minimum regression matrix is:
 - timeline playback and recovery;
 - sleep/wake timer replacement;
 - visible-page filtering; and
-- zero filesystem access during hot playback.
+- zero directory/metadata scans or cache generation during hot playback, with
+  only bounded scheduler frame loads.
 
 This repository includes pure-Python cache tests plus Blender registration,
 custom-location, full-range ingest, per-item refresh/trim, media-matrix, and
@@ -823,7 +871,8 @@ host-application check.
 - Register RNA classes first, then properties, preview runtime, scheduler, and
   deferred library refresh in that order.
 - Unregister runtime services and properties in exact reverse order.
-- Keep all panel draw and modal timer hot paths memory-only.
+- Keep panel draw memory-only and limit scheduler loads to bounded cache-frame
+  batches.
 - Test JPEG and alpha WebP preview loading, operator RNA registration, reload,
   disable/enable, cache refresh, mixed-rate playback, and full-range ingest in
   every declared Blender series.

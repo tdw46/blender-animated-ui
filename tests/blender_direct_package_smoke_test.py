@@ -96,6 +96,59 @@ try:
             )
         cache_dimensions[item_id] = dimensions
 
+    package.preview_cache._reset_statistics()
+    frame_bytes = (
+        package.constants.MAX_THUMBNAIL_EDGE
+        * package.constants.MAX_THUMBNAIL_EDGE
+        * package.constants.PREVIEW_DECODED_BYTES_PER_PIXEL
+    )
+    budget_bytes = frame_bytes * 12
+    item_ids = tuple(result_ids)
+    for step in range(48):
+        now_ms = step * 50
+        package.preview_cache.service_visible_items(
+            item_ids,
+            now_ms,
+            fps_limit=60,
+            now_monotonic=float(step + 1),
+            ram_budget_bytes=budget_bytes,
+        )
+        for item_id in item_ids:
+            package.preview_cache.icon_id(
+                item_id,
+                now_ms,
+                fps_limit=60,
+            )
+    budget_stats = package.preview_cache.memory_stats()
+    if budget_stats["estimated_bytes"] > budget_bytes:
+        raise RuntimeError(
+            f"Preview RAM budget exceeded: {budget_stats['estimated_bytes']} "
+            f"> {budget_bytes}"
+        )
+    if budget_stats["budget_evictions"] <= 0:
+        raise RuntimeError("Preview RAM budget did not evict surplus frames")
+    if budget_stats["current_frame_reloads"] != 0:
+        raise RuntimeError(
+            "Preview RAM budget reloaded frames only after they became current"
+        )
+    if budget_stats["draw_frame_reloads"] != 0:
+        raise RuntimeError("Panel draw had to reload an evicted current frame")
+
+    package.preview_cache.enforce_ram_budget(
+        item_ids,
+        2_400,
+        fps_limit=60,
+        ram_budget_bytes=1,
+    )
+    protected_floor_stats = package.preview_cache.memory_stats()
+    if protected_floor_stats["effective_budget_bytes"] <= 1:
+        raise RuntimeError("Protected preview working set did not raise the RAM floor")
+    if (
+        protected_floor_stats["estimated_bytes"]
+        > protected_floor_stats["effective_budget_bytes"]
+    ):
+        raise RuntimeError("Protected working-set floor did not contain loaded frames")
+
     print(
         "ANIMTHUMB_DIRECT_PACKAGE",
         {
@@ -103,6 +156,8 @@ try:
             "formats": list(expected_formats),
             "loaded_frame_counts": loaded,
             "cache_dimensions": cache_dimensions,
+            "budget_stats": budget_stats,
+            "protected_floor_stats": protected_floor_stats,
         },
     )
 finally:

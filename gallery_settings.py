@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .constants import DEFAULT_PREVIEW_FPS
+from .constants import DEFAULT_PREVIEW_FPS, DEFAULT_PREVIEW_RAM_BUDGET_MB
 from .gallery_query import (
     DEFAULT_GALLERY_MEDIA_TYPE,
     DEFAULT_GALLERY_SEARCH,
@@ -29,6 +29,7 @@ class GallerySettings:
     sort_mode: str = DEFAULT_GALLERY_SORT
     thumbnail_scale: float = DEFAULT_THUMBNAIL_SCALE
     preview_fps: int = DEFAULT_PREVIEW_FPS
+    preview_ram_budget_mb: int = DEFAULT_PREVIEW_RAM_BUDGET_MB
     optimized_playback: bool = DEFAULT_OPTIMIZED_PLAYBACK
 
 

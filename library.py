@@ -9,8 +9,8 @@ from pathlib import Path
 import bpy
 
 from .cache_format import read_metadata, update_metadata_name
-from .constants import GALLERY_PAGE_SIZE
 from .frame_rate import effective_fps
+from .gallery_pagination import adaptive_page_size, page_count
 from .gallery_query import source_media_type
 from .paths import cache_root
 
@@ -89,7 +89,14 @@ def refresh_scene(scene) -> int:
         now_ms=preview_engine.current_preview_ms(),
         fps_limit=preview_engine.preview_frame_rate(),
     )
-    max_page = max(0, (len(discovered) - 1) // GALLERY_PAGE_SIZE)
+    paging_memory = preview_cache.pagination_memory_estimate()
+    resolved_page_size = adaptive_page_size(
+        len(discovered),
+        preview_engine.preview_ram_budget_bytes(),
+        paging_memory["largest_frame_bytes"],
+        paging_memory["resident_poster_bytes"],
+    )
+    max_page = page_count(len(discovered), resolved_page_size) - 1
     scene.animthumb_gallery_page = min(
         max(0, int(scene.animthumb_gallery_page)),
         max_page,

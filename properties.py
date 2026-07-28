@@ -12,7 +12,12 @@ from bpy.props import (
     StringProperty,
 )
 
-from .constants import MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
+from .constants import (
+    MAX_PREVIEW_FPS,
+    MAX_PREVIEW_RAM_BUDGET_MB,
+    MIN_PREVIEW_FPS,
+    MIN_PREVIEW_RAM_BUDGET_MB,
+)
 from .gallery_query import (
     GALLERY_SORT_ITEMS,
     MEDIA_TYPE_FILTER_ITEMS,
@@ -30,6 +35,13 @@ def _update_gallery_settings(_owner, _context) -> None:
     preview_engine.request_fast_reschedule()
     preview_engine.tag_targeted_redraw()
     preview_engine.tag_targeted_layout_refresh()
+
+
+def _update_preview_ram_budget(_owner, _context) -> None:
+    from . import preview_engine
+
+    preview_engine.apply_preview_ram_budget()
+    _update_gallery_settings(None, _context)
 
 
 def _update_gallery_query(owner, context) -> None:
@@ -50,6 +62,7 @@ def reset_gallery_settings(context) -> None:
         ("animthumb_gallery_sort", defaults.sort_mode),
         ("animthumb_thumbnail_scale", defaults.thumbnail_scale),
         ("animthumb_preview_fps", defaults.preview_fps),
+        ("animthumb_preview_ram_budget_mb", defaults.preview_ram_budget_mb),
         ("animthumb_optimized_playback", defaults.optimized_playback),
     )
     changed = False
@@ -144,6 +157,21 @@ def register_properties() -> None:
         step=1,
         update=_update_gallery_settings,
     )
+    bpy.types.WindowManager.animthumb_preview_ram_budget_mb = IntProperty(
+        name="Preview RAM Budget",
+        description=(
+            "Approximate decoded thumbnail-frame memory budget in MiB; active "
+            "frames, short look-ahead windows, and one poster per item are retained"
+        ),
+        default=DEFAULT_GALLERY_SETTINGS.preview_ram_budget_mb,
+        min=MIN_PREVIEW_RAM_BUDGET_MB,
+        max=MAX_PREVIEW_RAM_BUDGET_MB,
+        soft_min=MIN_PREVIEW_RAM_BUDGET_MB,
+        soft_max=512,
+        step=8,
+        subtype="UNSIGNED",
+        update=_update_preview_ram_budget,
+    )
     bpy.types.WindowManager.animthumb_optimized_playback = BoolProperty(
         name="Optimized Playback Mode",
         description=(
@@ -172,6 +200,7 @@ def unregister_properties() -> None:
         (bpy.types.WindowManager, "animthumb_gallery_media_type"),
         (bpy.types.WindowManager, "animthumb_gallery_search"),
         (bpy.types.WindowManager, "animthumb_optimized_playback"),
+        (bpy.types.WindowManager, "animthumb_preview_ram_budget_mb"),
         (bpy.types.WindowManager, "animthumb_preview_fps"),
         (bpy.types.WindowManager, "animthumb_thumbnail_scale"),
         (bpy.types.WindowManager, "animthumb_preview_tick"),

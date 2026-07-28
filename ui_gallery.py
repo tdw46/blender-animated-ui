@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import textwrap
 
 import bpy
@@ -10,7 +9,14 @@ import bpy
 from .constants import (
     GALLERY_BASE_TILE_WIDTH_PX,
     GALLERY_ICON_SCALE,
-    GALLERY_PAGE_SIZE,
+)
+from .gallery_pagination import (
+    adaptive_page_size,
+    clamp_page,
+    page_bounds,
+    page_count,
+    pagination_button_rows,
+    pagination_layout_metrics,
 )
 from .gallery_query import GalleryQuery, filter_and_sort_media
 from .gallery_settings import (
@@ -102,6 +108,32 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
             text="Live Playback FPS Ceiling",
             slider=True,
         )
+        display_box.prop(
+            wm,
+            "animthumb_preview_ram_budget_mb",
+            text="Preview RAM Budget",
+            slider=True,
+        )
+        from . import preview_cache
+
+        memory_stats = preview_cache.memory_stats()
+        display_box.label(
+            text=(
+                f"{memory_stats['estimated_mebibytes']:.1f} MiB · "
+                f"{memory_stats['loaded_frames']} frames loaded"
+            ),
+            icon="MEMORY",
+        )
+        requested_budget = int(memory_stats["requested_budget_bytes"])
+        effective_budget = int(memory_stats["effective_budget_bytes"])
+        if requested_budget > 0 and effective_budget > requested_budget:
+            display_box.label(
+                text=(
+                    "Protected working set: "
+                    f"{memory_stats['effective_budget_mebibytes']:.1f} MiB"
+                ),
+                icon="INFO",
+            )
         display_box.prop(
             wm,
             "animthumb_optimized_playback",
@@ -235,35 +267,22 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
             preview_engine.register_ui_region(context, ())
             return
 
-        page_count = max(1, int(math.ceil(len(items) / GALLERY_PAGE_SIZE)))
-        current_page = min(
-            max(0, int(scene.animthumb_gallery_page)),
-            page_count - 1,
-        )
-        start = current_page * GALLERY_PAGE_SIZE
-        visible_items = items[start : start + GALLERY_PAGE_SIZE]
-
-        if page_count > 1:
-            page_row = layout.row(align=True)
-            previous = page_row.row(align=True)
-            previous.enabled = current_page > 0
-            previous.operator(
-                "animthumb.set_gallery_page",
-                text="",
-                icon="TRIA_LEFT",
-            ).page = max(0, current_page - 1)
-            page_row.label(
-                text=f"Page {current_page + 1} / {page_count}",
-            )
-            following = page_row.row(align=True)
-            following.enabled = current_page + 1 < page_count
-            following.operator(
-                "animthumb.set_gallery_page",
-                text="",
-                icon="TRIA_RIGHT",
-            ).page = min(page_count - 1, current_page + 1)
-
         from . import preview_cache, preview_engine
+
+        paging_memory = preview_cache.pagination_memory_estimate()
+        resolved_page_size = adaptive_page_size(
+            len(items),
+            preview_engine.preview_ram_budget_bytes(),
+            paging_memory["largest_frame_bytes"],
+            paging_memory["resident_poster_bytes"],
+        )
+        resolved_page_count = page_count(len(items), resolved_page_size)
+        current_page = clamp_page(
+            int(scene.animthumb_gallery_page),
+            resolved_page_count,
+        )
+        start, end = page_bounds(current_page, len(items), resolved_page_size)
+        visible_items = items[start:end]
 
         visible_ids: list[str] = []
         for item in visible_items:
@@ -349,3 +368,39 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 actions.item_id = str(item.item_id)
             if row_start + columns < len(visible_items):
                 gallery_box.separator(factor=0.6)
+
+        if resolved_page_count > 1:
+            pagination_metrics = pagination_layout_metrics(
+                max(1, int(getattr(context.region, "width", 300) or 300)),
+                _display_scale(context),
+            )
+            pagination_columns = int(pagination_metrics["columns"])
+            pagination_ui_units_x = float(pagination_metrics["ui_units_x"])
+            for pagination_buttons in pagination_button_rows(
+                resolved_page_count,
+                pagination_columns,
+            ):
+                pagination_row = layout.row(align=False)
+                pagination_row.alignment = "LEFT"
+                for pagination_button in pagination_buttons:
+                    slot = pagination_row.column(align=True)
+                    slot.ui_units_x = pagination_ui_units_x
+                    button = slot.row(align=True)
+                    button.ui_units_x = pagination_ui_units_x
+                    button.scale_y = 1.08
+                    button.alignment = "EXPAND"
+                    is_current = (
+                        pagination_button.kind == "PAGE"
+                        and pagination_button.page == current_page
+                    )
+                    if pagination_button.kind == "FIRST":
+                        button.enabled = current_page > 0
+                    elif pagination_button.kind == "LAST":
+                        button.enabled = current_page + 1 < resolved_page_count
+                    else:
+                        button.enabled = not is_current
+                    button.operator(
+                        "animthumb.set_gallery_page",
+                        text=pagination_button.label,
+                        depress=is_current,
+                    ).page = pagination_button.page

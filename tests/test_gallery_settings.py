@@ -22,6 +22,7 @@ from blender_animated_ui.gallery_settings import (  # noqa: E402
 class GallerySettingsTests(unittest.TestCase):
     def test_default_value_maps_to_original_one_point_five_visual_size(self) -> None:
         self.assertEqual(DEFAULT_GALLERY_SETTINGS.thumbnail_scale, 1.0)
+        self.assertEqual(DEFAULT_GALLERY_SETTINGS.preview_ram_budget_mb, 32)
         self.assertEqual(normalized_thumbnail_scale(1.0), 1.5)
 
     def test_minimum_preserves_original_point_seven_five_size(self) -> None:

@@ -10,6 +10,9 @@ import bpy
 from bpy.app.handlers import persistent
 
 from .constants import (
+    DEFAULT_PREVIEW_RAM_BUDGET_MB,
+    MAX_PREVIEW_RAM_BUDGET_MB,
+    MIN_PREVIEW_RAM_BUDGET_MB,
     PREVIEW_FRAME_CHANGE_THROTTLE_SECONDS,
     PREVIEW_HEALTH_CHECK_INTERVAL_SECONDS,
     PREVIEW_INTERACTION_PAUSE_INTERVAL_SECONDS,
@@ -88,6 +91,7 @@ def register_ui_region(context, visible_item_ids: tuple[str, ...]) -> None:
             resolved_visible_ids,
             current_preview_ms(),
             fps_limit=preview_frame_rate(),
+            ram_budget_bytes=preview_ram_budget_bytes(),
         )
 
 
@@ -186,6 +190,37 @@ def preview_frame_rate() -> int:
 
     wm = getattr(bpy.context, "window_manager", None)
     return clamp_preview_fps(getattr(wm, "animthumb_preview_fps", None))
+
+
+def preview_ram_budget_bytes() -> int:
+    wm = getattr(bpy.context, "window_manager", None)
+    try:
+        budget_mb = int(
+            getattr(
+                wm,
+                "animthumb_preview_ram_budget_mb",
+                DEFAULT_PREVIEW_RAM_BUDGET_MB,
+            )
+        )
+    except (TypeError, ValueError):
+        budget_mb = DEFAULT_PREVIEW_RAM_BUDGET_MB
+    budget_mb = max(
+        MIN_PREVIEW_RAM_BUDGET_MB,
+        min(budget_mb, MAX_PREVIEW_RAM_BUDGET_MB),
+    )
+    return budget_mb * 1024 * 1024
+
+
+def apply_preview_ram_budget() -> int:
+    from . import preview_cache
+
+    active_ids = visible_item_ids() or warm_item_ids()
+    return preview_cache.enforce_ram_budget(
+        active_ids,
+        current_preview_ms(),
+        fps_limit=preview_frame_rate(),
+        ram_budget_bytes=preview_ram_budget_bytes(),
+    )
 
 
 def _host_window():
@@ -713,6 +748,7 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                     ids,
                     now_ms,
                     fps_limit=fps_limit,
+                    ram_budget_bytes=preview_ram_budget_bytes(),
                 )
                 signature = preview_cache.frame_signature(
                     ids,
