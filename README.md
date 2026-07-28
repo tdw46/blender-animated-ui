@@ -89,8 +89,10 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
 | `media_selection.py` | Deterministic image-sequence ordering | None |
+| `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
+| `media_types.py` | Typed cache-image profiles and ingest results | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
-| `media_ingest.py` | FFmpeg probing, trimming, JPEG/WebP cache generation | Paths only |
+| `media_ingest.py` | FFmpeg probing, trimming, and atomic cache generation | None when `cache_directory` is supplied |
 | `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | None |
 | `paths.py` | Persistent extension-user cache/dependency paths | `bpy.utils` |
 | `preferences.py` | Optional custom cache-root preference | Blender RNA |
@@ -98,8 +100,13 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `preview_engine.py` | Visible-only modal scheduler, optimized mode, watchdog | Blender runtime |
 | `properties.py` | Scene library items and WindowManager UI settings | Blender RNA |
 | `library.py` | Scan persistent caches into Scene collections | Blender RNA |
-| `ops_media.py` | File selector, install, ingest, refresh, delete, pagination | Blender operators |
+| `ops_dependency.py` | FFmpeg install and readiness operator | Blender operators |
+| `ops_ingest.py` | File selector, probe analysis, ingest, and item refresh | Blender operators |
+| `ops_cache.py` | Library refresh, item menu, cache folder, and deletion | Blender operators |
+| `ops_gallery.py` | Gallery pagination | Blender operators |
+| `ui_media_settings.py` | Shared file-picker and refresh-dialog presentation | Blender UI |
 | `ui_gallery.py` | N-panel grid and settings-cog popover | Blender UI |
+| `utils.py` | Small Blender-facing operator helpers | Blender runtime |
 | `auto_load.py` | Discover and register extension-owned Blender classes | Blender registration |
 
 The top-level `__init__.py` is intentionally limited to lifecycle wiring.
@@ -114,6 +121,8 @@ your_extension/
 ├── frame_rate.py               # pure shared FPS policy
 ├── media_probe.py              # pure FFmpeg probe parser
 ├── media_selection.py          # pure image-sequence ordering
+├── media_settings.py           # pure import settings and estimates
+├── media_types.py              # typed conversion profiles/results
 ├── paths.py
 ├── cache_format.py             # pure cache model
 ├── ffmpeg_bridge.py            # optional ingest dependency
@@ -123,8 +132,13 @@ your_extension/
 ├── properties.py               # RNA definitions
 ├── preferences.py              # custom cache location
 ├── library.py                  # cache-to-RNA synchronization
-├── ops_media.py                # user actions
+├── ops_dependency.py           # FFmpeg install
+├── ops_ingest.py               # import and item refresh
+├── ops_cache.py                # cache/library actions
+├── ops_gallery.py              # pagination
+├── ui_media_settings.py        # shared import/refresh settings UI
 ├── ui_gallery.py               # example presentation layer
+├── utils.py                    # Blender-facing shared helpers
 └── blender_manifest.toml
 ```
 
@@ -138,16 +152,34 @@ flowchart LR
     PE --> R["Targeted UI-region redraw"]
     PC --> FPS["frame_rate.py<br/>shared FPS policy"]
 
-    OP["ops_media.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
+    OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
+    OP --> MS["media_settings.py<br/>shared analysis"]
+    OP --> UIS["ui_media_settings.py<br/>shared settings UI"]
     OP --> MI["media_ingest.py<br/>FFmpeg conversion"]
     MI --> MP["media_probe.py<br/>native source rate"]
+    MI --> MT["media_types.py<br/>profiles and result"]
     MI --> FPS
     MI --> CF["cache_format.py<br/>timed JPEG/WebP cache"]
     CF --> LIB["library.py<br/>persistent library scan"]
     LIB --> UI
 ```
 
-## Minimum splice-in integration
+## Integration profiles
+
+Copy the smallest profile that matches the destination extension:
+
+| Profile | Required modules | Use when |
+| --- | --- | --- |
+| Playback only | `constants.py`, `frame_rate.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
+| Ingest only | `constants.py`, `frame_rate.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
+| Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
+
+`media_ingest.py` is importable without `bpy`. Pass an explicit
+`cache_directory` to use it in a standalone Python process. When that argument
+is omitted, it imports `paths.cache_root()` lazily and therefore expects to be
+running inside Blender.
+
+### Complete splice-in integration
 
 For the complete reusable feature, copy these files into another extension:
 
@@ -159,15 +191,22 @@ ffmpeg_bridge.py
 frame_rate.py
 media_probe.py
 media_selection.py
+media_settings.py
+media_types.py
 library.py
 media_ingest.py
-ops_media.py
+ops_cache.py
+ops_dependency.py
+ops_gallery.py
+ops_ingest.py
 paths.py
 preferences.py
 preview_cache.py
 preview_engine.py
 properties.py
+ui_media_settings.py
 ui_gallery.py
+utils.py
 ```
 
 Then make these project-specific edits:
@@ -181,6 +220,10 @@ Then make these project-specific edits:
 5. Add or preserve the platform list required by the destination extension.
 6. Keep the dependency and thumbnail cache directories in persistent
    extension-user storage.
+7. Preserve `auto_load.py` exclusions for vendored or runtime-installed
+   dependency trees.
+8. Reload the extension after integration and test registration plus playback
+   in every Blender series declared by the destination manifest.
 
 ### Registration hooks
 
@@ -208,10 +251,45 @@ properties.unregister_properties()
 Do not access `bpy.data.scenes` while RNA classes are registering. The library
 scan is intentionally deferred through `bpy.app.timers`.
 
+## Public API
+
+The following calls and data types are the intended splice-in surface. Names
+beginning with `_` are implementation details and may move between modules.
+
+| API | Purpose | Runtime requirement |
+| --- | --- | --- |
+| `media_ingest.probe_media(executable, source_path)` | Read native FPS, dimensions, duration, alpha, and frame count | FFmpeg executable; no Blender requirement |
+| `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
+| `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
+| `media_settings.MediaImportSettings` | Immutable import, sequence-order, and trim settings | None |
+| `media_settings.MediaAnalysis` | Immutable probe information shared by UIs | None |
+| `media_settings.estimate_cache(analysis, settings)` | Estimate rate, duration, and output frame count | None |
+| `media_types.CacheImageProfile` | Define a custom Blender-readable cache image profile | None |
+| `media_types.IngestResult` | Typed immutable conversion result | None |
+| `cache_format.read_metadata(cache_dir)` | Validate schema and timed frame files | None |
+| `preview_cache.load_item(item, force=False)` | Load one cache into the shared preview collection | Blender main thread |
+| `preview_cache.icon_id(item_id, now_ms, fps_limit=None)` | Resolve the current in-memory preview icon | Blender main thread |
+| `preview_cache.next_interval_seconds(item_ids, now_ms, fps_limit=None)` | Find the earliest real boundary for visible items | Blender main thread |
+| `preview_engine.register_ui_region(context, item_ids)` | Declare exactly what a gallery region drew | Blender panel draw/main thread |
+| `preview_engine.schedule_start()` | Ensure the shared scheduler is running | Blender main thread |
+| `paths.cache_root()` | Resolve and create the active persistent cache root | Blender runtime |
+
+`IngestResult` supports both typed attribute access (`result.frame_count`) and
+legacy mapping access (`result["frame_count"]` and `result.get(...)`). Prefer
+attributes in new code. Use `result.as_dict()` when a detached dictionary is
+required for JSON or an older integration.
+
+Blender RNA and preview APIs are not thread-safe. Operators, Scene collection
+updates, preview collection loads/removals, scheduler registration, and UI
+redraw requests must run on Blender's main thread. FFmpeg itself runs in a
+subprocess, but the supplied operators currently wait for that subprocess from
+the main thread so they can report a deterministic finished/failed result.
+
 ## Using only the playback library
 
 Projects that already generate compatible timed image caches can skip `ffmpeg_bridge.py`,
-`media_ingest.py`, and the ingest operators.
+`media_ingest.py`, `media_settings.py`, `media_types.py`, `ops_dependency.py`,
+`ops_ingest.py`, and `ui_media_settings.py`.
 
 Create a cache directory containing `metadata.json` and timed images:
 
@@ -274,7 +352,18 @@ result = ingest_media(
     target_fps=60,
     trim_media=False,
 )
-print(result["cache_dir"])
+print(result.cache_dir)
+```
+
+Outside Blender, provide the destination explicitly so the module never imports
+`bpy` through the extension path helper:
+
+```python
+result = ingest_media(
+    "/absolute/path/to/ffmpeg",
+    ["/path/to/animation.gif"],
+    cache_directory="/path/to/generated_thumbnail_caches",
+)
 ```
 
 For image sequences, pass every file in display order:
@@ -294,7 +383,8 @@ result = ingest_media(
 
 `ingest_media()` stages the conversion, writes metadata atomically, swaps a
 previous cache only after success, and restores the prior cache if the final
-swap fails.
+swap fails. It returns an immutable `IngestResult`. Existing dictionary-style
+callers remain compatible, but attribute access is the preferred API.
 
 `target_fps` is optional and defaults to 60. It is clamped to the supported
 8–60 FPS range by `frame_rate.clamp_preview_fps()`. For encoded animated media,
@@ -329,6 +419,48 @@ result = ingest_media(
 Frame bounds are 1-based and inclusive. With `trim_media=False`, the begin/end
 values are ignored and the complete source is cached. `trim_end_frame=0` means
 the real media end when a caller cannot pre-probe it.
+
+### Cache image profiles
+
+The default profile resolver uses JPEG quality level 3 for opaque sources and
+WebP quality 82/compression level 4 for sources with alpha. JPEG receives black
+letterboxing; WebP receives transparent letterboxing.
+
+An integration can replace those settings without forking the pipeline:
+
+```python
+from .media_ingest import ingest_media
+from .media_types import CacheImageProfile
+
+
+def my_cache_profile(has_alpha: bool) -> CacheImageProfile:
+    if has_alpha:
+        return CacheImageProfile(
+            extension="webp",
+            metadata_format="WEBP",
+            pad_color="color=0x00000000",
+            ffmpeg_args=("-c:v", "libwebp", "-quality", "90"),
+        )
+    return CacheImageProfile(
+        extension="jpg",
+        metadata_format="JPEG",
+        pad_color="color=0x000000",
+        ffmpeg_args=("-q:v", "2"),
+    )
+
+
+result = ingest_media(
+    ffmpeg,
+    sources,
+    image_profile_resolver=my_cache_profile,
+)
+```
+
+Supported cache extensions are PNG, JPEG, and WebP. A custom FFmpeg profile is
+still responsible for producing files Blender can load through
+`bpy.utils.previews` on every host version in the extension's declared support
+range. Test opaque and alpha outputs in those actual Blender runtimes; a
+successful standalone FFmpeg conversion is not sufficient compatibility proof.
 
 ### Frame-rate integration contract
 
@@ -374,6 +506,13 @@ rate)`—rather than immutable ingest metadata.
 Changing the live ceiling does not rebuild caches. Use a card's arrow menu and
 **Refresh with New FPS Settings** to change that item's import sampling,
 sequence order, or trim range while preserving its cache identity.
+
+`ANIMTHUMB_OT_IngestMedia` and `ANIMTHUMB_OT_RefreshItem` intentionally declare
+their Blender RNA properties separately. Their calculations and presentation
+are shared through `media_settings.py` and `ui_media_settings.py`, but the
+property declarations are kept on each registered operator. This avoids
+registration-sensitive property mixins and makes both operator schemas
+discoverable through Blender's RNA API.
 
 ### Mixed playback frame rates
 
@@ -467,6 +606,27 @@ FPS, source/preview duration, media kind, cache format, sequence order, and trim
 fields are additive in schema version 1. Older schema-v1 PNG caches without
 them continue to load.
 
+### Schema migration policy
+
+Keep additive, optional metadata changes within schema version 1 and provide
+safe defaults in `cache_format.read_metadata()`. Increment
+`CACHE_SCHEMA_VERSION` only when an existing field changes meaning or the frame
+record layout becomes incompatible.
+
+When a future schema is necessary:
+
+1. teach the reader to recognize both the previous and new schema;
+2. migrate into a staging directory rather than rewriting the working cache;
+3. validate every referenced frame before the atomic directory swap;
+4. retain the previous directory until the replacement is published;
+5. invalidate the corresponding in-memory preview entry; and
+6. offer an explicit rebuild from `source_paths` when lossless migration is not
+   possible.
+
+Do not silently delete an unsupported cache during discovery. Skip it, preserve
+it on disk, and expose enough status for the user or integrating extension to
+rebuild it deliberately.
+
 ## Playback performance contract
 
 The fast path—panel redraw and modal `TIMER` events—must remain memory-only:
@@ -542,6 +702,26 @@ This repository includes pure-Python cache tests plus Blender registration,
 custom-location, full-range ingest, per-item refresh/trim, media-matrix, and
 modal-engine smoke tests. Visual layout evaluation remains a manual
 host-application check.
+
+### Destination-extension checklist
+
+- Rename class prefixes, operator IDs, and RNA property names where collisions
+  are possible.
+- Merge manifest `network` and `files` permissions instead of replacing the
+  destination extension's existing permissions.
+- Preserve every platform and Blender version already declared by the
+  destination extension.
+- Keep runtime-installed dependencies and caches outside the installed source
+  and out of `auto_load.py` discovery.
+- Register RNA classes first, then properties, preview runtime, scheduler, and
+  deferred library refresh in that order.
+- Unregister runtime services and properties in exact reverse order.
+- Keep all panel draw and modal timer hot paths memory-only.
+- Test JPEG and alpha WebP preview loading, operator RNA registration, reload,
+  disable/enable, cache refresh, mixed-rate playback, and full-range ingest in
+  every declared Blender series.
+- Capability-gate any destination-specific Blender API difference and retain
+  the older path for the complete declared compatibility range.
 
 ## License and dependency notes
 

@@ -15,11 +15,11 @@ from .constants import DEFAULT_PREVIEW_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
 
 
 def _update_gallery_settings(_owner, _context) -> None:
-    from . import preview_engine, ui_gallery
+    from . import preview_engine
 
     preview_engine.request_fast_reschedule()
     preview_engine.tag_targeted_redraw()
-    ui_gallery.tag_layout_refresh()
+    preview_engine.tag_targeted_layout_refresh()
 
 
 class ANIMTHUMB_PG_ThumbnailItem(bpy.types.PropertyGroup):
