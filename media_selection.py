@@ -36,6 +36,14 @@ SEQUENCE_ORDER_ITEMS = (
 )
 
 
+def default_media_name(paths: Iterable[str | Path]) -> str:
+    """Derive the shared import name for one source or an image sequence."""
+    resolved = tuple(Path(path).expanduser().resolve() for path in paths)
+    if not resolved:
+        return ""
+    return resolved[0].parent.name if len(resolved) > 1 else resolved[0].stem
+
+
 def natural_key(path: str | Path) -> tuple:
     """Return a stable filename key where numeric runs sort numerically."""
     resolved = Path(path)

@@ -27,7 +27,7 @@ from .constants import (
 from .frame_rate import frame_interval_ms, target_sample_fps
 from .gallery_query import source_media_type
 from .media_probe import MediaProbe, parse_ffmpeg_probe
-from .media_selection import DEFAULT_SEQUENCE_ORDER
+from .media_selection import DEFAULT_SEQUENCE_ORDER, default_media_name
 from .media_settings import MediaImportSettings
 from .media_types import CacheImageProfile, IngestResult
 
@@ -430,9 +430,7 @@ def ingest_media(
         raise FileNotFoundError(f"FFmpeg executable is unavailable: {executable}")
 
     item_id = str(cache_item_id or "").strip() or stable_item_id(sources)
-    name = display_name.strip() or (
-        sources[0].parent.name if len(sources) > 1 else sources[0].stem
-    )
+    name = display_name.strip() or default_media_name(sources)
     safe_name = safe_cache_name(name)
     root = _resolve_cache_root(cache_directory)
     final_dir = _existing_cache_directory(root, item_id) or (

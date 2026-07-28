@@ -14,11 +14,25 @@ package.__path__ = [str(ROOT)]
 sys.modules.setdefault("blender_animated_ui", package)
 
 from blender_animated_ui.media_selection import (  # noqa: E402
+    default_media_name,
     order_sequence_paths,
 )
 
 
 class MediaSelectionTests(unittest.TestCase):
+    def test_default_media_name_is_shared_for_files_and_sequences(self) -> None:
+        self.assertEqual(default_media_name(("/tmp/My Clip.mp4",)), "My Clip")
+        self.assertEqual(
+            default_media_name(
+                (
+                    "/tmp/Walk Cycle/frame_1.png",
+                    "/tmp/Walk Cycle/frame_2.png",
+                )
+            ),
+            "Walk Cycle",
+        )
+        self.assertEqual(default_media_name(()), "")
+
     def test_natural_order_handles_numeric_filename_runs(self) -> None:
         ordered = order_sequence_paths(
             ("/tmp/frame_10.png", "/tmp/frame_2.png", "/tmp/frame_1.png"),

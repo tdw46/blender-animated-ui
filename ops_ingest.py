@@ -20,6 +20,7 @@ from .constants import DEFAULT_IMPORT_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
 from .media_selection import (
     DEFAULT_SEQUENCE_ORDER,
     SEQUENCE_ORDER_ITEMS,
+    default_media_name,
     order_sequence_paths,
 )
 from .ops_dependency import prepare_ffmpeg
@@ -142,7 +143,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
             self.analysis_default_name = ""
             self.analysis_message = "Select a file to analyze"
             return
-        suggested_name = paths[0].parent.name if len(paths) > 1 else paths[0].stem
+        suggested_name = default_media_name(paths)
         if not str(self.display_name or "").strip() or (
             self.display_name == previous_default_name
         ):

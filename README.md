@@ -28,9 +28,12 @@ The extension name intentionally avoids using Blender as product branding. The
 repository and documentation use the word only to describe the host
 application.
 
-## Try the demo
+## Install and try the demo
 
-1. Download the release ZIP or build one with `build.sh`/`build.bat`.
+1. Download `blender_animated_ui-<version>.zip` from the
+   [GitHub Releases page](https://github.com/tdw46/blender-animated-ui/releases).
+   Use the named extension asset, not GitHub's automatically generated
+   **Source code** archive, because Blender expects the manifest at the ZIP root.
 2. In Blender 4.2 or newer, open Preferences → Get Extensions, use the
    drop-down menu, and choose **Install from Disk**.
 3. Open the 3D View sidebar and select the **Animated Previews** tab.
@@ -53,6 +56,19 @@ extension source, the global Python environment, or a raw `.whl` path.
 
 If Online Access is disabled, the extension asks the user to enable it before
 running pip. An existing system FFmpeg executable is accepted as a fallback.
+
+To build an installable ZIP from a source checkout, use the platform script and
+then verify the result:
+
+```bash
+BLENDER_PATH="/absolute/path/to/blender" ./build.sh
+python3 tools/verify_package.py blender_animated_ui-0.1.0.zip
+```
+
+On Windows, set `BLENDER_PATH` and run `build.bat`, then run the same verifier
+with Blender's Python or another Python 3.11+ interpreter. The scripts validate
+that `blender_manifest.toml` and legacy `bl_info` versions match before
+packaging.
 
 ## Supported input
 
@@ -90,14 +106,14 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | --- | --- | --- |
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
-| `media_selection.py` | Deterministic image-sequence ordering | None |
+| `media_selection.py` | Default imported-name derivation and deterministic sequence ordering | None |
 | `gallery_settings.py` | Shared cog defaults and normalized thumbnail-scale math | None |
 | `gallery_query.py` | Source-type classification, name filtering, and date/name sorting | None |
 | `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
 | `media_ingest.py` | FFmpeg probing, trimming, and atomic cache generation | None when `cache_directory` is supplied |
-| `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | None |
+| `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | Blender path helpers and Python subprocesses |
 | `paths.py` | Persistent extension-user cache/dependency paths | `bpy.utils` |
 | `preferences.py` | Optional custom cache-root preference | Blender RNA |
 | `preview_cache.py` | Load frames once and answer memory-only icon/timing queries | `bpy.utils.previews` |
@@ -108,7 +124,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `ops_ingest.py` | File selector, probe analysis, ingest, and item refresh | Blender operators |
 | `ops_cache.py` | Library refresh, item menu, rename, cache folder, and deletion | Blender operators |
 | `ops_gallery.py` | Gallery pagination and settings reset | Blender operators |
-| `ui_media_settings.py` | Shared file-picker and refresh-dialog presentation | Blender UI |
+| `ui_media_settings.py` | Shared file-picker and refresh-dialog presentation | Blender `UILayout`/context, without a direct `bpy` import |
 | `ui_gallery.py` | N-panel grid and settings-cog popover | Blender UI |
 | `utils.py` | Small Blender-facing operator helpers | Blender runtime |
 | `auto_load.py` | Discover and register extension-owned Blender classes | Blender registration |
@@ -179,13 +195,35 @@ Copy the smallest profile that matches the destination extension:
 | Profile | Required modules | Use when |
 | --- | --- | --- |
 | Playback only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
-| Ingest only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
+| Ingest only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
 | Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
 
 `media_ingest.py` is importable without `bpy`. Pass an explicit
 `cache_directory` to use it in a standalone Python process. When that argument
 is omitted, it imports `paths.cache_root()` lazily and therefore expects to be
 running inside Blender.
+
+### Integrator quick start
+
+1. Pick one integration profile above instead of copying unrelated layers.
+2. Copy the listed modules with package-relative imports intact. If the
+   destination already has an auto-loader, keep that loader and make it
+   discover these classes; do not register the same classes through two
+   auto-loaders.
+3. Rename the operator/RNA namespace, set `ADDON_ID`, merge manifest permissions
+   and compatibility ranges, and preserve `LICENSE` plus
+   `THIRD_PARTY_NOTICES.md`.
+4. Wire the registration hooks below in the documented order.
+5. Decide whether the destination exposes the supplied FFmpeg install operator,
+   uses a system executable, or supplies its own executable to
+   `media_ingest.ingest_media()`.
+6. Run pure tests, register in every declared Blender series, build the
+   extension, verify the ZIP, and install that ZIP through **Install from Disk**.
+
+The source directory is a development checkout, not the end-user install
+artifact. Always test the built ZIP because extension namespace, manifest
+permissions, excluded files, and persistent user paths differ from a direct
+source import.
 
 ### Complete splice-in integration
 
@@ -217,6 +255,8 @@ properties.py
 ui_media_settings.py
 ui_gallery.py
 utils.py
+LICENSE
+THIRD_PARTY_NOTICES.md
 ```
 
 Then make these project-specific edits:
@@ -232,7 +272,8 @@ Then make these project-specific edits:
    extension-user storage.
 7. Preserve `auto_load.py` exclusions for vendored or runtime-installed
    dependency trees.
-8. Reload the extension after integration and test registration plus playback
+8. Keep the GPL license and third-party notices with copied or distributed code.
+9. Reload the extension after integration and test registration plus playback
    in every Blender series declared by the destination manifest.
 
 ### Registration hooks
@@ -276,6 +317,7 @@ beginning with `_` are implementation details and may move between modules.
 | `gallery_query.GalleryQuery` | Immutable search, media-type, and sort settings | None |
 | `gallery_query.source_media_type(source_paths, is_sequence=False)` | Classify imported media from its source extension | None |
 | `gallery_query.filter_and_sort_media(items, query)` | Compose name search, source-type filtering, and date/name sorting | None |
+| `media_selection.default_media_name(source_paths)` | Derive the same default Imported Name used by UI and ingest | None |
 | `media_settings.MediaImportSettings` | Immutable import, sequence-order, and trim settings | None |
 | `media_settings.MediaAnalysis` | Immutable probe information shared by UIs | None |
 | `media_settings.estimate_cache(analysis, settings)` | Estimate rate, duration, and output frame count | None |
@@ -283,11 +325,13 @@ beginning with `_` are implementation details and may move between modules.
 | `media_types.IngestResult` | Typed immutable conversion result | None |
 | `cache_format.read_metadata(cache_dir)` | Validate schema and timed frame files | None |
 | `cache_format.update_metadata_name(cache_dir, name)` | Atomically rename a cache without rebuilding frames | None |
+| `library.rename_item(item_id, name)` | Rename a discovered cache and refresh Scene libraries | Blender main thread |
 | `preview_cache.load_item(item, force=False)` | Load one cache into the shared preview collection | Blender main thread |
 | `preview_cache.icon_id(item_id, now_ms, fps_limit=None)` | Resolve the current in-memory preview icon | Blender main thread |
 | `preview_cache.next_interval_seconds(item_ids, now_ms, fps_limit=None)` | Find the earliest real boundary for visible items | Blender main thread |
 | `preview_engine.register_ui_region(context, item_ids)` | Declare exactly what a gallery region drew | Blender panel draw/main thread |
 | `preview_engine.schedule_start()` | Ensure the shared scheduler is running | Blender main thread |
+| `properties.reset_gallery_settings(context)` | Restore every settings-cog default and first page | Blender main thread |
 | `paths.cache_root()` | Resolve and create the active persistent cache root | Blender runtime |
 
 `IngestResult` supports both typed attribute access (`result.frame_count`) and
@@ -330,6 +374,8 @@ During panel draw, get the current icon entirely from memory:
 
 ```python
 from . import preview_engine, preview_cache
+from .constants import GALLERY_ICON_SCALE
+from .gallery_settings import normalized_thumbnail_scale
 
 now_ms = preview_engine.current_preview_ms()
 icon_id = preview_cache.icon_id(
@@ -337,7 +383,10 @@ icon_id = preview_cache.icon_id(
     now_ms,
     fps_limit=preview_engine.preview_frame_rate(),
 )
-layout.template_icon(icon_value=icon_id, scale=5.0)
+icon_scale = GALLERY_ICON_SCALE * normalized_thumbnail_scale(
+    context.window_manager.animthumb_thumbnail_scale
+)
+layout.template_icon(icon_value=icon_id, scale=icon_scale)
 ```
 
 Tell the scheduler which items this UI region actually drew:
@@ -371,6 +420,12 @@ result = ingest_media(
 print(result.cache_dir)
 ```
 
+The complete Blender UI calls `ops_dependency.prepare_ffmpeg()` before ingest.
+That route honors Blender's Online Access setting, prefers an already installed
+wheel or system FFmpeg, and exposes an explicit install operator when neither is
+ready. A custom Blender UI should follow the same pattern; it should not perform
+network installation from panel draw code.
+
 Outside Blender, provide the destination explicitly so the module never imports
 `bpy` through the extension path helper:
 
@@ -381,6 +436,10 @@ result = ingest_media(
     cache_directory="/path/to/generated_thumbnail_caches",
 )
 ```
+
+Standalone callers should supply their own FFmpeg executable and
+`cache_directory`; `ffmpeg_bridge.py` intentionally uses Blender's persistent
+extension-user paths and is not part of the Blender-free ingest profile.
 
 For image sequences, pass every file in display order:
 
@@ -725,6 +784,13 @@ uv sync
 ./tools/test.sh
 ```
 
+After building a release candidate, verify the actual artifact rather than only
+the source tree:
+
+```bash
+python3 tools/verify_package.py blender_animated_ui-0.1.0.zip
+```
+
 Runtime validation should cover every declared host version and UI scale. The
 minimum regression matrix is:
 
@@ -746,12 +812,15 @@ host-application check.
 
 - Rename class prefixes, operator IDs, and RNA property names where collisions
   are possible.
+- Reuse the destination's existing auto-loader when it has one; never let two
+  registration systems discover the same Blender class.
 - Merge manifest `network` and `files` permissions instead of replacing the
   destination extension's existing permissions.
 - Preserve every platform and Blender version already declared by the
   destination extension.
 - Keep runtime-installed dependencies and caches outside the installed source
   and out of `auto_load.py` discovery.
+- Preserve `LICENSE` and `THIRD_PARTY_NOTICES.md` with copied/distributed code.
 - Register RNA classes first, then properties, preview runtime, scheduler, and
   deferred library refresh in that order.
 - Unregister runtime services and properties in exact reverse order.
@@ -759,6 +828,8 @@ host-application check.
 - Test JPEG and alpha WebP preview loading, operator RNA registration, reload,
   disable/enable, cache refresh, mixed-rate playback, and full-range ingest in
   every declared Blender series.
+- Build and inspect the real ZIP, then install it through Blender's
+  **Install from Disk** flow instead of testing only a source checkout.
 - Capability-gate any destination-specific Blender API difference and retain
   the older path for the complete declared compatibility range.
 

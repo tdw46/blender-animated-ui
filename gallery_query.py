@@ -6,11 +6,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from .gallery_settings import (
-    DEFAULT_GALLERY_MEDIA_TYPE,
-    DEFAULT_GALLERY_SEARCH,
-    DEFAULT_GALLERY_SORT,
-)
+DEFAULT_GALLERY_SEARCH = ""
+DEFAULT_GALLERY_MEDIA_TYPE = "ALL"
+DEFAULT_GALLERY_SORT = "DATE_ADDED_DESC"
 
 MEDIA_TYPE_FILTER_ITEMS = (
     ("ALL", "All Media Types", "Show every imported media type"),
