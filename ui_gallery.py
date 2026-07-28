@@ -40,7 +40,7 @@ def gallery_layout_metrics(context, region_width: int) -> dict[str, float | int]
         )
     except (TypeError, ValueError):
         thumbnail_scale = 1.0
-    thumbnail_scale = max(0.5, min(thumbnail_scale, 2.0))
+    thumbnail_scale = max(0.5, min(thumbnail_scale, 4.0))
     target_tile_width = GALLERY_BASE_TILE_WIDTH_PX * display_scale * thumbnail_scale
     columns = max(1, int(max(1.0, float(region_width)) // target_tile_width))
     return {
@@ -84,18 +84,38 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
-        layout.label(text="Library", icon="FILTER")
-        layout.prop(
+        display_box = layout.box()
+        display_box.label(text="Display", icon="PREFERENCES")
+        display_box.prop(
+            wm,
+            "animthumb_thumbnail_scale",
+            text="Thumbnail Scale",
+            slider=True,
+        )
+        display_box.prop(
+            wm,
+            "animthumb_preview_fps",
+            text="Live Playback FPS Ceiling",
+            slider=True,
+        )
+        display_box.prop(
+            wm,
+            "animthumb_optimized_playback",
+            text="Optimized Playback Mode",
+        )
+        library_box = layout.box()
+        library_box.label(text="Library", icon="FILTER")
+        library_box.prop(
             wm,
             "animthumb_gallery_search",
-            text="Search by Name",
+            text="Search",
         )
-        layout.prop(
+        library_box.prop(
             wm,
             "animthumb_gallery_media_type",
             text="Media Type",
         )
-        layout.prop(
+        library_box.prop(
             wm,
             "animthumb_gallery_sort",
             text="Sort",
@@ -110,27 +130,8 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
                 ),
             )
         )
-        layout.label(
+        library_box.label(
             text=f"Showing {filtered_count} of {len(context.scene.animthumb_items)}"
-        )
-        layout.separator()
-        layout.label(text="Display", icon="PREFERENCES")
-        layout.prop(
-            wm,
-            "animthumb_thumbnail_scale",
-            text="Thumbnail Scale",
-            slider=True,
-        )
-        layout.prop(
-            wm,
-            "animthumb_preview_fps",
-            text="Live Playback FPS Ceiling",
-            slider=True,
-        )
-        layout.prop(
-            wm,
-            "animthumb_optimized_playback",
-            text="Optimized Playback Mode",
         )
 
 

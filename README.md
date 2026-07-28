@@ -660,11 +660,11 @@ visible-item load.
 
 The settings-cog popover exposes:
 
-- **Search by Name**, a case-insensitive title filter;
+- **Search**, a case-insensitive title filter;
 - **Media Type**, using the source type stored during import;
 - **Sort**, with newest/oldest date-added and A–Z/Z–A name ordering;
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
-  column wrapping and can be dragged up to 2.0×;
+  column wrapping and can be dragged up to 4.0×;
 - **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
   and updates each card’s active FPS label from 8 through 60 FPS; and
 - **Optimized Playback Mode**, which pauses only for timeline playback,
