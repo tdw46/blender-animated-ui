@@ -1,0 +1,61 @@
+schema_version = "1.0.0"
+
+id = "blender_animated_ui"
+version = "0.1.0"
+name = "Animated Thumbnail Preview Demo"
+tagline = "Reusable animated media thumbnails for extension UIs"
+maintainer = "Tyler Walker"
+type = "add-on"
+
+website = "https://github.com/tdw46/blender-animated-ui"
+tags = ["User Interface"]
+
+blender_version_min = "4.2.0"
+blender_version_max = "5.9.999"
+platforms = [
+  "windows-x64",
+  "macos-arm64",
+  "macos-x64",
+  "linux-x64",
+  "linux-arm64",
+]
+
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 Tyler Walker"]
+
+[permissions]
+network = "Install the platform-specific imageio-ffmpeg wheel from PyPI"
+files = "Read media and store persistent generated thumbnail caches"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/.github/",
+  "/.venv/",
+  "/tests/",
+  "/tools/",
+  ".gitignore",
+  ".gitattributes",
+  ".python-version",
+  "pyproject.toml",
+  "uv.lock",
+  "*.pyc",
+  "*.pyo",
+  "*.pyd",
+  "*.zip",
+  "*.log",
+  "*.bat",
+  "*.sh",
+  ".DS_Store",
+  "Thumbs.db",
+  ".mypy_cache/",
+  ".pytest_cache/",
+  ".ruff_cache/",
+  ".vscode/",
+  ".idea/",
+  "*.egg-info/",
+  "*.blend1",
+  "*.blend2",
+  "*.blend3",
+]

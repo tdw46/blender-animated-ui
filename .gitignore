@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.zip
+*.log
+*.blend1
+*.blend2
+*.blend3
+.DS_Store
+Thumbs.db
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+python_dependencies/
+thumbnail_cache/
