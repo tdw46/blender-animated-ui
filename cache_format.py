@@ -10,9 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .constants import CACHE_SCHEMA_VERSION, DEFAULT_STATIC_FRAME_MS
+from .frame_rate import effective_fps
 
 _FRAME_PATTERN = re.compile(
-    r"^frame_(?P<index>\d+)__(?P<start>\d+)_(?P<end>\d+)\.png$",
+    (
+        r"^frame_(?P<index>\d+)__(?P<start>\d+)_(?P<end>\d+)"
+        r"\.(?P<extension>png|jpe?g|webp)$"
+    ),
     flags=re.IGNORECASE,
 )
 
@@ -42,11 +46,19 @@ def safe_cache_name(name: str, fallback: str = "animated_media") -> str:
     return cleaned[:80] or fallback
 
 
-def frame_filename(index: int, start_ms: int, end_ms: int) -> str:
+def frame_filename(
+    index: int,
+    start_ms: int,
+    end_ms: int,
+    extension: str = "png",
+) -> str:
     safe_index = max(0, int(index))
     safe_start = max(0, int(start_ms))
     safe_end = max(safe_start + 1, int(end_ms))
-    return f"frame_{safe_index:03d}__{safe_start:08d}_{safe_end:08d}.png"
+    safe_extension = str(extension or "png").lower().lstrip(".")
+    if safe_extension not in {"png", "jpg", "jpeg", "webp"}:
+        safe_extension = "png"
+    return f"frame_{safe_index:03d}__{safe_start:08d}_{safe_end:08d}.{safe_extension}"
 
 
 def parse_frame_filename(path: str | Path) -> FrameRecord | None:
@@ -94,8 +106,21 @@ def write_metadata(
     records: Iterable[FrameRecord],
     width: int,
     height: int,
+    target_fps: int | float | None = None,
+    source_fps: int | float | None = None,
+    sample_fps: int | float | None = None,
+    source_duration_ms: int | None = None,
+    media_kind: str = "",
+    source_type: str = "",
+    date_added_utc: str = "",
+    sequence_order: str = "",
+    cache_image_format: str = "PNG",
+    trim_media: bool = False,
+    trim_start_frame: int = 1,
+    trim_end_frame: int = 0,
 ) -> Path:
     resolved_records = tuple(records)
+    duration_ms = max(1, int(resolved_records[-1].end_ms)) if resolved_records else 0
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "item_id": item_id,
@@ -103,8 +128,18 @@ def write_metadata(
         "source_paths": [str(Path(path).resolve()) for path in source_paths],
         "width": max(0, int(width)),
         "height": max(0, int(height)),
-        "duration_ms": (
-            max(1, int(resolved_records[-1].end_ms)) if resolved_records else 0
+        "media_kind": str(media_kind or "MEDIA"),
+        "source_type": str(source_type or "OTHER").upper(),
+        "date_added_utc": str(date_added_utc or ""),
+        "cache_image_format": str(cache_image_format or "PNG").upper(),
+        "trim_media": bool(trim_media),
+        "trim_start_frame": max(1, int(trim_start_frame)),
+        "trim_end_frame": max(0, int(trim_end_frame)),
+        "duration_ms": duration_ms,
+        "preview_duration_ms": duration_ms,
+        "effective_fps": round(
+            effective_fps(len(resolved_records), duration_ms),
+            6,
         ),
         "frames": [
             {
@@ -116,6 +151,16 @@ def write_metadata(
             for record in resolved_records
         ],
     }
+    if target_fps is not None:
+        payload["target_fps"] = max(0.0, float(target_fps))
+    if source_fps is not None and float(source_fps) > 0.0:
+        payload["source_fps"] = max(0.0, float(source_fps))
+    if sample_fps is not None:
+        payload["sample_fps"] = max(0.0, float(sample_fps))
+    if source_duration_ms is not None:
+        payload["source_duration_ms"] = max(0, int(source_duration_ms))
+    if sequence_order:
+        payload["sequence_order"] = str(sequence_order)
     metadata_path = cache_dir / "metadata.json"
     temporary_path = cache_dir / "metadata.json.tmp"
     temporary_path.write_text(
@@ -124,6 +169,27 @@ def write_metadata(
     )
     temporary_path.replace(metadata_path)
     return metadata_path
+
+
+def update_metadata_name(cache_dir: str | Path, name: str) -> str:
+    """Atomically update only the reader-facing name of an existing cache."""
+    resolved_name = str(name or "").strip()
+    if not resolved_name:
+        raise ValueError("Imported name cannot be empty")
+    metadata_path = Path(cache_dir) / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if int(payload.get("schema_version", -1)) != CACHE_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported thumbnail cache schema: {payload.get('schema_version')!r}"
+        )
+    temporary_path = metadata_path.with_suffix(".json.tmp")
+    payload["name"] = resolved_name
+    temporary_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_path.replace(metadata_path)
+    return resolved_name
 
 
 def read_metadata(cache_dir: str | Path) -> dict:

@@ -18,6 +18,7 @@ from blender_animated_ui.cache_format import (  # noqa: E402
     parse_frame_filename,
     read_metadata,
     stable_item_id,
+    update_metadata_name,
     write_metadata,
 )
 
@@ -30,6 +31,8 @@ class CacheFormatTests(unittest.TestCase):
         self.assertEqual(record.index, 12)
         self.assertEqual(record.start_ms, 345)
         self.assertEqual(record.end_ms, 678)
+        self.assertEqual(frame_filename(1, 0, 100, "jpg").split(".")[-1], "jpg")
+        self.assertIsNotNone(parse_frame_filename("frame_001__00000000_00000100.webp"))
 
     def test_uniform_records_are_cumulative(self) -> None:
         records = build_uniform_records(
@@ -59,11 +62,36 @@ class CacheFormatTests(unittest.TestCase):
                 records=records,
                 width=320,
                 height=180,
+                target_fps=12,
+                source_fps=24,
+                sample_fps=12,
+                source_duration_ms=1250,
+                media_kind="MEDIA",
+                source_type="GIF",
+                date_added_utc="2026-07-28T12:00:00Z",
             )
             metadata = read_metadata(cache_dir)
             self.assertEqual(metadata["item_id"], "test")
             self.assertEqual(metadata["duration_ms"], 300)
+            self.assertEqual(metadata["preview_duration_ms"], 300)
+            self.assertEqual(metadata["source_duration_ms"], 1250)
+            self.assertEqual(metadata["media_kind"], "MEDIA")
+            self.assertEqual(metadata["source_type"], "GIF")
+            self.assertEqual(
+                metadata["date_added_utc"],
+                "2026-07-28T12:00:00Z",
+            )
+            self.assertEqual(metadata["cache_image_format"], "PNG")
+            self.assertFalse(metadata["trim_media"])
+            self.assertEqual(metadata["target_fps"], 12.0)
+            self.assertEqual(metadata["source_fps"], 24.0)
+            self.assertEqual(metadata["sample_fps"], 12.0)
+            self.assertEqual(metadata["effective_fps"], 10.0)
             self.assertEqual(len(metadata["records"]), 3)
+            self.assertEqual(update_metadata_name(cache_dir, "Renamed"), "Renamed")
+            renamed_metadata = read_metadata(cache_dir)
+            self.assertEqual(renamed_metadata["name"], "Renamed")
+            self.assertEqual(len(renamed_metadata["records"]), 3)
 
     def test_item_id_is_stable(self) -> None:
         first = stable_item_id(["/tmp/a.gif", "/tmp/b.gif"])

@@ -132,8 +132,13 @@ def visible_item_ids() -> tuple[str, ...]:
     return tuple(ids)
 
 
-def tag_targeted_redraw() -> None:
-    for region, _target in _live_ui_targets():
+def tag_targeted_redraw(item_ids: set[str] | None = None) -> None:
+    target_filter = None if item_ids is None else set(item_ids)
+    for region, target in _live_ui_targets():
+        if target_filter is not None and not target_filter.intersection(
+            target.get("visible_item_ids", ())
+        ):
+            continue
         try:
             region.tag_redraw()
         except Exception:
@@ -153,6 +158,13 @@ def tag_targeted_layout_refresh() -> None:
 
 def current_preview_ms() -> int:
     return int(_NOW_MS or preview_clock_ms())
+
+
+def preview_frame_rate() -> int:
+    from .frame_rate import clamp_preview_fps
+
+    wm = getattr(bpy.context, "window_manager", None)
+    return clamp_preview_fps(getattr(wm, "animthumb_preview_fps", None))
 
 
 def _host_window():
@@ -496,9 +508,25 @@ def schedule_start() -> None:
 
 
 def request_fast_reschedule() -> None:
+    global _LAST_SIGNATURE
+    _LAST_SIGNATURE = None
     instance = _ENGINE_INSTANCE
     if instance is not None:
         instance._schedule_interval(PREVIEW_TIMER_INTERVAL_SECONDS)
+
+
+def _changed_signature_items(
+    previous_signature,
+    current_signature: tuple[tuple[str, int], ...],
+) -> set[str]:
+    if previous_signature is None:
+        return {item_id for item_id, _frame_index in current_signature}
+    previous = dict(previous_signature)
+    return {
+        item_id
+        for item_id, frame_index in current_signature
+        if previous.get(item_id) != frame_index
+    }
 
 
 def stop() -> None:
@@ -608,7 +636,11 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
         from . import preview_cache
 
         ids = visible_item_ids()
-        initial_interval = preview_cache.next_interval_seconds(ids, preview_clock_ms())
+        initial_interval = preview_cache.next_interval_seconds(
+            ids,
+            preview_clock_ms(),
+            fps_limit=preview_frame_rate(),
+        )
         self._schedule_interval(initial_interval)
         if self._timer is None:
             return {"CANCELLED"}
@@ -650,8 +682,17 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                 from . import preview_cache
 
                 now_ms = preview_clock_ms()
-                signature = preview_cache.frame_signature(ids, now_ms)
+                fps_limit = preview_frame_rate()
+                signature = preview_cache.frame_signature(
+                    ids,
+                    now_ms,
+                    fps_limit=fps_limit,
+                )
                 if signature != _LAST_SIGNATURE:
+                    changed_item_ids = _changed_signature_items(
+                        _LAST_SIGNATURE,
+                        signature,
+                    )
                     _LAST_SIGNATURE = signature
                     _NOW_MS = now_ms
                     wm = getattr(context, "window_manager", None) or self._wm
@@ -659,9 +700,13 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                         wm.animthumb_preview_tick = (
                             int(getattr(wm, "animthumb_preview_tick", 0) or 0) + 1
                         ) % 1_000_000
-                    tag_targeted_redraw()
+                    tag_targeted_redraw(changed_item_ids)
                 self._schedule_interval(
-                    preview_cache.next_interval_seconds(ids, now_ms)
+                    preview_cache.next_interval_seconds(
+                        ids,
+                        now_ms,
+                        fps_limit=fps_limit,
+                    )
                 )
             return {"PASS_THROUGH"}
         _mark_interaction(context, event)

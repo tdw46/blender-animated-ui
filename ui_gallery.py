@@ -12,6 +12,11 @@ from .constants import (
     GALLERY_ICON_SCALE,
     GALLERY_PAGE_SIZE,
 )
+from .gallery_query import GalleryQuery, filter_and_sort_media
+from .gallery_settings import (
+    DEFAULT_GALLERY_SETTINGS,
+    normalized_thumbnail_scale,
+)
 
 
 def _display_scale(context) -> float:
@@ -33,13 +38,13 @@ def _display_scale(context) -> float:
 
 def gallery_layout_metrics(context, region_width: int) -> dict[str, float | int]:
     display_scale = _display_scale(context)
-    try:
-        thumbnail_scale = float(
-            getattr(context.window_manager, "animthumb_thumbnail_scale", 1.0) or 1.0
+    thumbnail_scale = normalized_thumbnail_scale(
+        getattr(
+            context.window_manager,
+            "animthumb_thumbnail_scale",
+            DEFAULT_GALLERY_SETTINGS.thumbnail_scale,
         )
-    except (TypeError, ValueError):
-        thumbnail_scale = 1.0
-    thumbnail_scale = max(0.5, min(thumbnail_scale, 2.0))
+    )
     target_tile_width = GALLERY_BASE_TILE_WIDTH_PX * display_scale * thumbnail_scale
     columns = max(1, int(max(1.0, float(region_width)) // target_tile_width))
     return {
@@ -83,16 +88,59 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
-        layout.prop(
+        display_box = layout.box()
+        display_box.label(text="Display", icon="PREFERENCES")
+        display_box.prop(
             wm,
             "animthumb_thumbnail_scale",
             text="Thumbnail Scale",
             slider=True,
         )
-        layout.prop(
+        display_box.prop(
+            wm,
+            "animthumb_preview_fps",
+            text="Live Playback FPS Ceiling",
+            slider=True,
+        )
+        display_box.prop(
             wm,
             "animthumb_optimized_playback",
             text="Optimized Playback Mode",
+        )
+        library_box = layout.box()
+        library_box.label(text="Library", icon="FILTER")
+        library_box.prop(
+            wm,
+            "animthumb_gallery_search",
+            text="Search",
+        )
+        library_box.prop(
+            wm,
+            "animthumb_gallery_media_type",
+            text="Media Type",
+        )
+        library_box.prop(
+            wm,
+            "animthumb_gallery_sort",
+            text="Sort",
+        )
+        filtered_count = len(
+            filter_and_sort_media(
+                context.scene.animthumb_items,
+                GalleryQuery(
+                    search_text=wm.animthumb_gallery_search,
+                    media_type=wm.animthumb_gallery_media_type,
+                    sort_mode=wm.animthumb_gallery_sort,
+                ),
+            )
+        )
+        library_box.label(
+            text=f"Showing {filtered_count} of {len(context.scene.animthumb_items)}"
+        )
+        layout.operator(
+            "animthumb.reset_gallery_settings",
+            text="Reset Settings",
+            icon="LOOP_BACK",
         )
 
 
@@ -158,10 +206,28 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 icon="ERROR" if status_level == "ERROR" else "INFO",
             )
 
-        items = list(scene.animthumb_items)
-        if not items:
+        all_items = list(scene.animthumb_items)
+        if not all_items:
             layout.label(
                 text="Add media to generate the first thumbnail cache.",
+                icon="INFO",
+            )
+            from . import preview_engine
+
+            preview_engine.register_ui_region(context, ())
+            return
+
+        items = filter_and_sort_media(
+            all_items,
+            GalleryQuery(
+                search_text=wm.animthumb_gallery_search,
+                media_type=wm.animthumb_gallery_media_type,
+                sort_mode=wm.animthumb_gallery_sort,
+            ),
+        )
+        if not items:
+            layout.label(
+                text="No thumbnails match the gallery filters.",
                 icon="INFO",
             )
             from . import preview_engine
@@ -210,6 +276,7 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
         _preview_tick = int(getattr(wm, "animthumb_preview_tick", 0) or 0)
         del _preview_tick
         now_ms = preview_engine.current_preview_ms()
+        preview_fps = preview_engine.preview_frame_rate()
         metrics = gallery_layout_metrics(
             context,
             max(1, int(getattr(context.region, "width", 300) or 300)),
@@ -243,7 +310,11 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                     ui_units_x,
                     row_title_lines,
                 )
-                icon_id = preview_cache.icon_id(str(item.item_id), now_ms)
+                icon_id = preview_cache.icon_id(
+                    str(item.item_id),
+                    now_ms,
+                    fps_limit=preview_fps,
+                )
                 thumbnail_row = column.row(align=True)
                 thumbnail_row.scale_y = 0.78
                 if icon_id:
@@ -256,15 +327,25 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 action_row = column.row(align=True)
                 action_row.scale_y = 0.82
                 action_row.alignment = "CENTER"
+                frame_count = int(item.frame_count)
+                display_fps = preview_cache.display_frame_rate(
+                    str(item.item_id),
+                    fps_limit=preview_fps,
+                )
+                rate_text = (
+                    f"{display_fps:.1f} FPS"
+                    if frame_count > 1 and display_fps > 0.0
+                    else "Still"
+                )
                 action_row.label(
-                    text=f"{int(item.frame_count)} frames",
+                    text=f"{frame_count}f · {rate_text}",
                     icon="TIME",
                 )
-                delete = action_row.operator(
-                    "animthumb.delete_item",
+                actions = action_row.operator(
+                    "animthumb.open_item_actions",
                     text="",
-                    icon="TRASH",
+                    icon="DOWNARROW_HLT",
                 )
-                delete.item_id = str(item.item_id)
+                actions.item_id = str(item.item_id)
             if row_start + columns < len(visible_items):
                 gallery_box.separator(factor=0.6)
