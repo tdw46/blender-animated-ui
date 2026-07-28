@@ -415,7 +415,7 @@ visible-item load.
 The settings-cog popover exposes:
 
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
-  column wrapping;
+  column wrapping and can be dragged up to 2.0×;
 - **Maximum Preview FPS**, which immediately caps live thumbnail sampling and
   updates each card’s active FPS label, and is an 8–60 FPS ceiling used for
   future ingests; and

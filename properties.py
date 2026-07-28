@@ -61,7 +61,7 @@ def register_properties() -> None:
         min=0.5,
         max=2.0,
         soft_min=0.75,
-        soft_max=1.5,
+        soft_max=2.0,
         step=5,
         precision=2,
         update=_update_gallery_settings,

@@ -21,6 +21,11 @@ scene = bpy.context.scene
 scene.animthumb_gallery_page = 0
 if bpy.context.window_manager.animthumb_preview_fps != 10:
     raise RuntimeError("Preview frame-rate setting has the wrong default")
+scale_property = bpy.types.WindowManager.bl_rna.properties["animthumb_thumbnail_scale"]
+if float(scale_property.hard_max) != 2.0:
+    raise RuntimeError("Thumbnail scale hard maximum is not 2.0")
+if float(scale_property.soft_max) != 2.0:
+    raise RuntimeError("Thumbnail scale slider does not reach 2.0")
 fps_property = bpy.types.WindowManager.bl_rna.properties["animthumb_preview_fps"]
 if int(fps_property.hard_min) != 8:
     raise RuntimeError(f"Expected an 8 FPS minimum, got {fps_property.hard_min}")
@@ -33,6 +38,7 @@ print(
         "panel": True,
         "scene_properties": True,
         "optimized_mode": True,
+        "thumbnail_scale_max": float(scale_property.soft_max),
         "preview_fps": int(bpy.context.window_manager.animthumb_preview_fps),
         "preview_fps_max": int(fps_property.hard_max),
     },
