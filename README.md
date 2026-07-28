@@ -9,8 +9,7 @@ This repository turns GIFs, APNGs, videos, still images, and selected image
 sequences into timed JPEG/WebP frame caches, then displays those frames inside
 a normal Blender N-panel gallery through `bpy.utils.previews`.
 
-The playback architecture is a modular extraction of the production approach
-used by Beyond VRM Extension Suite:
+The playback architecture provides:
 
 - one guarded modal scheduler for every visible thumbnail;
 - source-duration-aware frame boundaries;
@@ -25,10 +24,6 @@ used by Beyond VRM Extension Suite:
 - missed mouse-release repair on Windows and macOS; and
 - a low-frequency watchdog that replaces a timer only when its heartbeat is
   stale.
-
-The extension name intentionally avoids using Blender as product branding. The
-repository and documentation use the word only to describe the host
-application.
 
 ## Install and try the demo
 
@@ -84,7 +79,7 @@ installed FFmpeg build. The file browser highlights common inputs:
 - MP4, MOV, M4V, AVI, MKV, WebM, MPEG, WMV, and FLV; and
 - multiple selected image files treated as an ordered sequence.
 
-Opaque inputs are normalized to square JPEG frames with black letterboxing.
+Opaque inputs are converted to square JPEG frames with black letterboxing.
 Sources with an alpha channel use square WebP frames with transparent
 letterboxing. Both formats load through Blender preview collections in the
 supported host versions while using substantially less cache space than a
@@ -111,7 +106,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
 | `media_selection.py` | Default imported-name derivation and deterministic sequence ordering | None |
-| `gallery_settings.py` | Shared cog defaults and normalized thumbnail-scale math | None |
+| `gallery_settings.py` | Shared cog defaults and thumbnail-scale calculation | None |
 | `gallery_query.py` | Source-type classification, name filtering, and date/name sorting | None |
 | `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
@@ -177,7 +172,7 @@ flowchart LR
     PE --> PC
     PE --> R["Targeted UI-region redraw"]
     PC --> FPS["frame_rate.py<br/>shared FPS policy"]
-    UI --> GS["gallery_settings.py<br/>defaults and scale normalization"]
+    UI --> GS["gallery_settings.py<br/>defaults and thumbnail sizing"]
     UI --> GQ["gallery_query.py<br/>filter and sort"]
 
     OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
@@ -317,7 +312,7 @@ beginning with `_` are implementation details and may move between modules.
 | `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
 | `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
 | `gallery_settings.DEFAULT_GALLERY_SETTINGS` | Shared search, filter, sort, size, FPS, and optimized-mode defaults | None |
-| `gallery_settings.normalized_thumbnail_scale(value)` | Map the 1.0 UI baseline onto the original 1.5 visual size | None |
+| `gallery_settings.normalized_thumbnail_scale(value)` | Convert the Thumbnail Scale setting to the icon multiplier used by the gallery | None |
 | `gallery_query.GalleryQuery` | Immutable search, media-type, and sort settings | None |
 | `gallery_query.source_media_type(source_paths, is_sequence=False)` | Classify imported media from its source extension | None |
 | `gallery_query.filter_and_sort_media(items, query)` | Compose name search, source-type filtering, and date/name sorting | None |
@@ -339,9 +334,9 @@ beginning with `_` are implementation details and may move between modules.
 | `paths.cache_root()` | Resolve and create the active persistent cache root | Blender runtime |
 
 `IngestResult` supports both typed attribute access (`result.frame_count`) and
-legacy mapping access (`result["frame_count"]` and `result.get(...)`). Prefer
-attributes in new code. Use `result.as_dict()` when a detached dictionary is
-required for JSON or an older integration.
+mapping access (`result["frame_count"]` and `result.get(...)`). Typed attributes
+are recommended. Use `result.as_dict()` when a detached dictionary is required
+for JSON.
 
 Blender RNA and preview APIs are not thread-safe. Operators, Scene collection
 updates, preview collection loads/removals, scheduler registration, and UI
@@ -544,7 +539,7 @@ successful standalone FFmpeg conversion is not sufficient compatibility proof.
 
 ### Frame-rate integration contract
 
-The demo deliberately keeps two settings separate:
+The demo exposes two independent frame-rate settings:
 
 - each import/refresh operator owns a per-item `target_fps` ceiling, default 22;
 - `WindowManager.animthumb_preview_fps` is the current 8–60 FPS live gallery
@@ -690,7 +685,7 @@ FPS, source/preview duration, source type, date added, media kind, cache format,
 sequence order, and trim fields are additive in schema version 1. Older
 schema-v1 PNG caches without them continue to load.
 
-`source_type` is the normalized source extension captured at import
+`source_type` is the uppercase source extension captured at import
 (`MP4`, `GIF`, `APNG`, and so on), or `SEQUENCE` for a selected image sequence.
 `date_added_utc` records the original import time and is preserved by per-item
 refreshes. Older caches derive their type from `source_paths` and use the
@@ -737,9 +732,7 @@ The settings-cog popover exposes:
 - **Media Type**, using the source type stored during import;
 - **Sort**, with newest/oldest date-added and A–Z/Z–A name ordering;
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
-  column wrapping. It defaults to 1.0, which renders at the original 1.5 visual
-  size. The new 0.5 minimum preserves the original 0.75 visual size, and the
-  slider reaches 4.0;
+  column wrapping. It defaults to 1.0 and supports values from 0.5 through 4.0;
 - **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
   and updates each card’s active FPS label from 8 through 60 FPS;
 - **Optimized Playback Mode**, which pauses only for timeline playback,
