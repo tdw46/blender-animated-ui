@@ -30,6 +30,8 @@ class CacheFormatTests(unittest.TestCase):
         self.assertEqual(record.index, 12)
         self.assertEqual(record.start_ms, 345)
         self.assertEqual(record.end_ms, 678)
+        self.assertEqual(frame_filename(1, 0, 100, "jpg").split(".")[-1], "jpg")
+        self.assertIsNotNone(parse_frame_filename("frame_001__00000000_00000100.webp"))
 
     def test_uniform_records_are_cumulative(self) -> None:
         records = build_uniform_records(
@@ -63,12 +65,16 @@ class CacheFormatTests(unittest.TestCase):
                 source_fps=24,
                 sample_fps=12,
                 source_duration_ms=1250,
+                media_kind="MEDIA",
             )
             metadata = read_metadata(cache_dir)
             self.assertEqual(metadata["item_id"], "test")
             self.assertEqual(metadata["duration_ms"], 300)
             self.assertEqual(metadata["preview_duration_ms"], 300)
             self.assertEqual(metadata["source_duration_ms"], 1250)
+            self.assertEqual(metadata["media_kind"], "MEDIA")
+            self.assertEqual(metadata["cache_image_format"], "PNG")
+            self.assertFalse(metadata["trim_media"])
             self.assertEqual(metadata["target_fps"], 12.0)
             self.assertEqual(metadata["source_fps"], 24.0)
             self.assertEqual(metadata["sample_fps"], 12.0)

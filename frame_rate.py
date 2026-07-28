@@ -55,21 +55,17 @@ def target_sample_fps(
     *,
     source_fps: float = 0.0,
 ) -> float:
-    """Choose a bounded cache rate without creating sub-floor fast-media caches.
+    """Choose the requested/native cache rate.
 
-    The frame budget may shorten the cached preview window, but it cannot drag
-    media that supports the configured floor below it. A genuinely slower
-    encoded source remains capped by its own native rate.
+    ``max_frames`` and ``duration_seconds`` remain part of the public call
+    contract for integrations migrating from the earlier bounded-cache demo.
+    They no longer lower the sampling rate or shorten the preview window.
     """
     requested = float(clamp_preview_fps(requested_fps))
-    duration = max(0.0, float(duration_seconds))
-    frame_budget = max(1, int(max_frames))
+    del duration_seconds, max_frames
     native = max(0.0, float(source_fps))
     rate = min(requested, native) if native > 0.0 else requested
-    if duration <= 0.0:
-        return rate
-    budget_rate = frame_budget / duration
-    return max(0.01, min(rate, max(float(MIN_PREVIEW_FPS), budget_rate)))
+    return max(0.01, rate)
 
 
 def sample_wait_ms(
@@ -114,17 +110,3 @@ def active_display_fps(
         if rate > 0.0
     ]
     return min(limits) if limits else 0.0
-
-
-def bounded_sample_indices(item_count: int, max_items: int) -> tuple[int, ...]:
-    """Choose evenly distributed source indices within a fixed frame budget."""
-    count = max(0, int(item_count))
-    budget = max(1, int(max_items))
-    if count <= budget:
-        return tuple(range(count))
-    if budget == 1:
-        return (0,)
-    return tuple(
-        min(count - 1, int(round(index * (count - 1) / (budget - 1))))
-        for index in range(budget)
-    )

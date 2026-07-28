@@ -92,7 +92,7 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
         layout.prop(
             wm,
             "animthumb_preview_fps",
-            text="Maximum Preview FPS",
+            text="Live Playback FPS Ceiling",
             slider=True,
         )
         layout.prop(
@@ -281,11 +281,11 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                     text=f"{frame_count}f · {rate_text}",
                     icon="TIME",
                 )
-                delete = action_row.operator(
-                    "animthumb.delete_item",
+                actions = action_row.operator(
+                    "animthumb.open_item_actions",
                     text="",
-                    icon="TRASH",
+                    icon="DOWNARROW_HLT",
                 )
-                delete.item_id = str(item.item_id)
+                actions.item_id = str(item.item_id)
             if row_start + columns < len(visible_items):
                 gallery_box.separator(factor=0.6)

@@ -35,8 +35,32 @@ def user_root() -> Path:
     )
 
 
+def default_cache_root() -> Path:
+    return user_root() / "thumbnail_cache"
+
+
+def _configured_cache_directory() -> str:
+    preferences = getattr(getattr(bpy.context, "preferences", None), "addons", None)
+    if preferences is None:
+        return ""
+    addon = preferences.get(extension_package())
+    if addon is None:
+        return ""
+    addon_preferences = getattr(addon, "preferences", None)
+    return str(
+        getattr(addon_preferences, "thumbnail_cache_directory", "") or ""
+    ).strip()
+
+
 def cache_root() -> Path:
-    path = user_root() / "thumbnail_cache"
+    configured = _configured_cache_directory()
+    if configured:
+        try:
+            path = Path(bpy.path.abspath(configured)).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            path = default_cache_root()
+    else:
+        path = default_cache_root()
     path.mkdir(parents=True, exist_ok=True)
     return path
 

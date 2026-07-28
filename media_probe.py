@@ -13,6 +13,7 @@ _FRAME_RATE_PATTERN = re.compile(
     r"(?<![\d.])(?P<fps>\d+(?:\.\d+)?)\s+fps\b",
     flags=re.IGNORECASE,
 )
+_FRAME_COUNT_PATTERN = re.compile(r"\bframe=\s*(?P<count>\d+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,8 @@ class MediaProbe:
     width: int
     height: int
     source_fps: float
+    has_alpha: bool
+    frame_count: int
 
 
 def parse_ffmpeg_probe(output: str) -> MediaProbe:
@@ -55,9 +58,29 @@ def parse_ffmpeg_probe(output: str) -> MediaProbe:
     width = int(dimension_match.group("width")) if dimension_match else 0
     height = int(dimension_match.group("height")) if dimension_match else 0
     source_fps = float(frame_rate_match.group("fps")) if frame_rate_match else 0.0
+    alpha_formats = (
+        "rgba",
+        "bgra",
+        "argb",
+        "abgr",
+        "yuva",
+        "gbrap",
+        "ya8",
+        "pal8",
+    )
+    has_alpha = any(
+        alpha_format in line.casefold()
+        for line in video_lines
+        for alpha_format in alpha_formats
+    )
+    frame_counts = tuple(
+        int(match.group("count")) for match in _FRAME_COUNT_PATTERN.finditer(text)
+    )
     return MediaProbe(
         duration_seconds=max(0.0, duration_seconds),
         width=max(0, width),
         height=max(0, height),
         source_fps=max(0.0, source_fps),
+        has_alpha=has_alpha,
+        frame_count=max(frame_counts, default=0),
     )

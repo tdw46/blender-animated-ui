@@ -3,9 +3,9 @@
 A reusable example library for adding efficient animated preview thumbnails to
 Blender extensions.
 
-This repository turns GIFs, APNGs, videos, still images, and selected PNG/image
-sequences into bounded PNG frame caches, then displays those frames inside a
-normal Blender N-panel gallery through `bpy.utils.previews`.
+This repository turns GIFs, APNGs, videos, still images, and selected image
+sequences into timed JPEG/WebP frame caches, then displays those frames inside
+a normal Blender N-panel gallery through `bpy.utils.previews`.
 
 The playback architecture is a modular extraction of the production approach
 used by Beyond VRM Extension Suite:
@@ -16,7 +16,7 @@ used by Beyond VRM Extension Suite:
 - no filesystem access in the playback hot path;
 - only the visible gallery page advances;
 - only the N-panel UI regions that drew the gallery are redrawn;
-- a settings cog with thumbnail sizing, an 8–60 FPS ceiling, and opt-in
+- a settings cog with thumbnail sizing, an 8–60 FPS live ceiling, and opt-in
   optimized playback;
 - viewport, timeline, and gallery-scroll pausing that matches the Beyond VRM
   behavior;
@@ -38,6 +38,12 @@ application.
 5. Select one animated/image/video file, or multi-select an ordered image
    sequence.
 
+The file browser analyzes the active media and shows its native FPS, full
+duration, expected cache FPS, expected cache size, and optional trim range.
+New imports default to a 60 FPS ceiling but never exceed the media's own native
+rate. Use the arrow beneath any card to rebuild it with new settings, open its
+cache directory, or delete it.
+
 On the first ingest, the extension can install the platform-specific
 `imageio-ffmpeg` 0.6.0 wheel into persistent extension-user storage. The wheel
 contains its FFmpeg executable. Nothing is installed into Blender’s managed
@@ -56,18 +62,23 @@ installed FFmpeg build. The file browser highlights common inputs:
 - MP4, MOV, M4V, AVI, MKV, WebM, MPEG, WMV, and FLV; and
 - multiple selected image files treated as an ordered sequence.
 
-Every input is normalized to at most 60 square RGBA PNG frames with transparent
-letterboxing. **Maximum Preview FPS** is an 8–60 FPS ceiling (10 FPS by
-default), not a forced conversion rate. Media that natively supports at least
-8 FPS never receives a slower cache merely because it is long. Instead, encoded
-media uses a shorter preview window when the 60-frame budget is reached. A
-genuinely slower source remains at its native rate, so a real 4 FPS animation is
-not padded with duplicates or sped up.
+Opaque inputs are normalized to square JPEG frames with black letterboxing.
+Sources with an alpha channel use square WebP frames with transparent
+letterboxing. Both formats load through Blender preview collections in the
+supported host versions while using substantially less cache space than a
+full PNG cache in common cases.
 
-Selected image sequences have no encoded native rate, so the setting defines
-their playback rate. Sequences longer than 60 images are sampled evenly from
-first to last rather than truncating the tail; their bounded cache therefore
-acts as a full-sequence overview.
+Every import preserves the complete media range by default. Cache size never
+causes an automatic FPS reduction, tail cut, or shorter preview window. Large
+expected caches show a warning so the user can deliberately lower the import
+FPS or enable **Trim Media**. Trim is disabled by default; its inclusive
+**Begin Frame** and **End Frame** values initialize to the actual first and
+last source frames after analysis.
+
+Selected image sequences have no encoded native rate, so **Playback FPS**
+defines their rate. Every selected image is retained unless Trim Media is
+enabled. Sequence order can be alphanumeric ascending/descending, file date
+oldest/newest, or Blender file-browser selection order.
 
 ## Module map
 
@@ -77,10 +88,12 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | --- | --- | --- |
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
+| `media_selection.py` | Deterministic image-sequence ordering | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
-| `media_ingest.py` | FFmpeg probing, sampling, PNG cache generation | Paths only |
+| `media_ingest.py` | FFmpeg probing, trimming, JPEG/WebP cache generation | Paths only |
 | `ffmpeg_bridge.py` | Isolated wheel install and executable discovery | None |
 | `paths.py` | Persistent extension-user cache/dependency paths | `bpy.utils` |
+| `preferences.py` | Optional custom cache-root preference | Blender RNA |
 | `preview_cache.py` | Load frames once and answer memory-only icon/timing queries | `bpy.utils.previews` |
 | `preview_engine.py` | Visible-only modal scheduler, optimized mode, watchdog | Blender runtime |
 | `properties.py` | Scene library items and WindowManager UI settings | Blender RNA |
@@ -100,6 +113,7 @@ your_extension/
 ├── constants.py
 ├── frame_rate.py               # pure shared FPS policy
 ├── media_probe.py              # pure FFmpeg probe parser
+├── media_selection.py          # pure image-sequence ordering
 ├── paths.py
 ├── cache_format.py             # pure cache model
 ├── ffmpeg_bridge.py            # optional ingest dependency
@@ -107,6 +121,7 @@ your_extension/
 ├── preview_cache.py            # preview icons and frame timing
 ├── preview_engine.py           # one persistent scheduler
 ├── properties.py               # RNA definitions
+├── preferences.py              # custom cache location
 ├── library.py                  # cache-to-RNA synchronization
 ├── ops_media.py                # user actions
 ├── ui_gallery.py               # example presentation layer
@@ -127,7 +142,7 @@ flowchart LR
     OP --> MI["media_ingest.py<br/>FFmpeg conversion"]
     MI --> MP["media_probe.py<br/>native source rate"]
     MI --> FPS
-    MI --> CF["cache_format.py<br/>timed PNG cache"]
+    MI --> CF["cache_format.py<br/>timed JPEG/WebP cache"]
     CF --> LIB["library.py<br/>persistent library scan"]
     LIB --> UI
 ```
@@ -143,10 +158,12 @@ constants.py
 ffmpeg_bridge.py
 frame_rate.py
 media_probe.py
+media_selection.py
 library.py
 media_ingest.py
 ops_media.py
 paths.py
+preferences.py
 preview_cache.py
 preview_engine.py
 properties.py
@@ -193,18 +210,18 @@ scan is intentionally deferred through `bpy.app.timers`.
 
 ## Using only the playback library
 
-Projects that already generate PNG caches can skip `ffmpeg_bridge.py`,
+Projects that already generate compatible timed image caches can skip `ffmpeg_bridge.py`,
 `media_ingest.py`, and the ingest operators.
 
-Create a cache directory containing `metadata.json` and timed PNGs:
+Create a cache directory containing `metadata.json` and timed images:
 
 ```text
 thumbnail_cache/
 └── walk_cycle_a1b2c3d4/
     ├── metadata.json
-    ├── frame_000__00000000_00000100.png
-    ├── frame_001__00000100_00000200.png
-    └── frame_002__00000200_00000300.png
+    ├── frame_000__00000000_00000100.jpg
+    ├── frame_001__00000100_00000200.jpg
+    └── frame_002__00000200_00000300.jpg
 ```
 
 Load a Scene item once:
@@ -255,6 +272,7 @@ result = ingest_media(
     ["/path/to/animation.gif"],
     display_name="My Animation",
     target_fps=60,
+    trim_media=False,
 )
 print(result["cache_dir"])
 ```
@@ -270,6 +288,7 @@ result = ingest_media(
         "/path/to/frame_0003.png",
     ],
     target_fps=60,
+    sequence_order="ALPHANUMERIC_ASC",
 )
 ```
 
@@ -277,31 +296,49 @@ result = ingest_media(
 previous cache only after success, and restores the prior cache if the final
 swap fails.
 
-`target_fps` is optional and defaults to 10. It is clamped to the supported
+`target_fps` is optional and defaults to 60. It is clamped to the supported
 8–60 FPS range by `frame_rate.clamp_preview_fps()`. For encoded animated media,
-`media_probe.parse_ffmpeg_probe()` detects the source rate. The FFmpeg sampling
-rate is:
+`media_probe.parse_ffmpeg_probe()` detects the source rate. The import rate is:
 
 ```text
-source_cap = min(target_fps, source_fps)
-sample_fps = min(
-    source_cap,
-    max(8, MAX_SAMPLED_FRAMES / source_duration),
+sample_fps = min(target_fps, source_fps)  # when native FPS is known
+```
+
+An unknown source rate leaves the requested ceiling unchanged rather than being
+guessed.
+Consequently, requesting 60 FPS for a 12 FPS GIF/video produces an approximately
+12 FPS cache instead of five duplicated cache frames per source frame. A
+15-second, 24 FPS video produces the full approximately 360-frame, 15-second
+cache. If `source_fps` itself is below 8 FPS, that genuine native rate is kept;
+the 8 FPS minimum applies to user-selectable ceilings, not to retiming slow
+source media.
+
+Trimming is always opt-in:
+
+```python
+result = ingest_media(
+    ffmpeg,
+    ["/path/to/animation.mp4"],
+    target_fps=30,
+    trim_media=True,
+    trim_start_frame=121,
+    trim_end_frame=240,
 )
 ```
 
-An unknown source rate is omitted from `source_cap` rather than guessed.
-Consequently, requesting 60 FPS for a 12 FPS GIF/video produces an approximately
-12 FPS cache instead of five duplicated cache frames per source frame. A
-15-second, 24 FPS video capped at 60 cache frames uses an 8 FPS, 7.5-second
-preview window—not a stretched 4 FPS cache. If `source_fps` itself is below
-8 FPS, the outer minimum keeps that genuine native rate.
+Frame bounds are 1-based and inclusive. With `trim_media=False`, the begin/end
+values are ignored and the complete source is cached. `trim_end_frame=0` means
+the real media end when a caller cannot pre-probe it.
 
 ### Frame-rate integration contract
 
-The demo stores the ceiling in `WindowManager.animthumb_preview_fps`. Projects
-that rename the property should keep these two call sites connected to the same
-value:
+The demo deliberately keeps two settings separate:
+
+- each import/refresh operator owns a per-item `target_fps` ceiling, default 60;
+- `WindowManager.animthumb_preview_fps` is the current 8–60 FPS live gallery
+  ceiling, default 10.
+
+The live value must be connected to both frame lookup and scheduling:
 
 ```python
 # Live playback: affects loaded caches immediately.
@@ -311,9 +348,6 @@ interval = preview_cache.next_interval_seconds(
     now_ms,
     fps_limit=preview_fps,
 )
-
-# Ingest: affects the generated frame cache.
-result = ingest_media(ffmpeg, source_paths, target_fps=preview_fps)
 ```
 
 The `fps_limit` keyword is optional. Omitting it preserves uncapped,
@@ -337,6 +371,10 @@ immediately updates both live playback and the displayed FPS number. The number
 is the active display rate—`min(global ceiling, cache rate, native source
 rate)`—rather than immutable ingest metadata.
 
+Changing the live ceiling does not rebuild caches. Use a card's arrow menu and
+**Refresh with New FPS Settings** to change that item's import sampling,
+sequence order, or trim range while preserving its cache identity.
+
 ### Mixed playback frame rates
 
 Each cache retains its own cumulative frame boundaries and effective rate.
@@ -351,9 +389,34 @@ At that event:
 
 The engine compares signatures per item and redraws only registered UI regions
 containing an item that changed. When several rates share one N-panel region,
-Blender redraws that region for the fastest changing item, but slower
-thumbnails keep their own frame until their native boundary. No slower cache is
-advanced or regenerated at the faster rate.
+the scheduler wakes for the earliest real boundary among them—the same policy
+as the Beyond VRM implementation. The region's redraw cadence can therefore
+approach the union of distinct boundaries: a 30 FPS and 12 FPS pair can cost up
+to roughly 42 redraw opportunities per second when their boundaries do not
+coincide. It is still capped by the live ceiling and the 60 FPS scheduler
+minimum interval. Unchanged thumbnails retain their frame; they are never
+advanced, decoded, or regenerated at a neighbor's rate.
+
+### Cache location and item actions
+
+By default, caches live in Blender's persistent extension-user storage, not in
+the installed extension source. The extension Preferences panel exposes an
+optional **Thumbnail Cache Location** directory. `paths.cache_root()` is the
+single integration point, so changing the preference affects ingest, discovery,
+refresh, and deletion consistently.
+
+Changing the setting never moves or deletes an existing cache. The gallery
+rescans the newly selected root; switching back restores discovery of caches in
+the previous root. Integrations that want migration should implement it as a
+separate, explicit operation.
+
+The per-card arrow menu contains:
+
+- **Refresh with New FPS Settings**, which atomically rebuilds the same cache
+  identity;
+- **Open Thumbnail Cache Directory**, which uses Blender's path-open operator
+  with a capability-gated OS fallback; and
+- **Delete Thumbnail**, which removes only that generated item directory.
 
 ## Cache schema
 
@@ -367,8 +430,13 @@ advanced or regenerated at the faster rate.
   "source_paths": ["/absolute/path/walk.gif"],
   "width": 512,
   "height": 512,
-  "duration_ms": 1200,
-  "preview_duration_ms": 1200,
+  "media_kind": "MEDIA",
+  "cache_image_format": "WEBP",
+  "trim_media": false,
+  "trim_start_frame": 1,
+  "trim_end_frame": 72,
+  "duration_ms": 6000,
+  "preview_duration_ms": 6000,
   "source_duration_ms": 6000,
   "target_fps": 60.0,
   "source_fps": 12.0,
@@ -379,7 +447,7 @@ advanced or regenerated at the faster rate.
       "index": 0,
       "start_ms": 0,
       "end_ms": 100,
-      "file": "frame_000__00000000_00000100.png"
+      "file": "frame_000__00000000_00000100.webp"
     }
   ]
 }
@@ -392,11 +460,12 @@ timer tick means a new frame. `target_fps` is the user ceiling, `source_fps` is
 the detected encoded-media rate, `sample_fps` is the FFmpeg extraction rate,
 and `effective_fps` records the rate the completed cache actually represents.
 `duration_ms`/`preview_duration_ms` describe the cached playback loop, while
-`source_duration_ms` preserves the probed input duration so an integration can
-tell when a long source used a shortened preview window.
+`source_duration_ms` preserves the full probed input duration. They match within
+frame-rounding tolerance unless the user explicitly enabled Trim Media.
 
-All FPS and source/preview-duration metadata fields are additive in schema
-version 1. Older schema-v1 caches without them continue to load.
+FPS, source/preview duration, media kind, cache format, sequence order, and trim
+fields are additive in schema version 1. Older schema-v1 PNG caches without
+them continue to load.
 
 ## Playback performance contract
 
@@ -416,9 +485,8 @@ The settings-cog popover exposes:
 
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
   column wrapping and can be dragged up to 2.0×;
-- **Maximum Preview FPS**, which immediately caps live thumbnail sampling and
-  updates each card’s active FPS label, and is an 8–60 FPS ceiling used for
-  future ingests; and
+- **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
+  and updates each card’s active FPS label from 8 through 60 FPS; and
 - **Optimized Playback Mode**, which pauses only for timeline playback,
   `(recent depsgraph activity AND real viewport drag/transform)`, or scrolling
   inside the owning preview UI region.
@@ -428,15 +496,15 @@ scrolling outside the gallery do not renew a pause.
 
 Changing the preview rate does not decode or regenerate anything in the panel
 draw path. Lower values immediately reduce redraw pressure for existing
-caches. Raising the value cannot recreate source frames that were omitted when
-an existing cache was generated; ingest the source again to rebuild that cache
-at the new ceiling. Raising it above a source’s native FPS never upscales that
-source. The 60-frame cache ceiling always wins, so the nominal full-rate window
-is `60 / min(target_fps, source_fps)` seconds when a source rate is available.
-For sources that support it, the ingest floor makes that window no longer than
-7.5 seconds. Existing caches are not retimed because doing so would speed up or
-slow down their sampled motion; re-ingest an older sub-8 FPS cache to rebuild it
-under the new floor.
+caches. Raising it above a cache or source rate never upscales that item. A
+visible 60 FPS item can make its shared N-panel region redraw about six times as
+often as a 10 FPS item, but lower-rate neighbors keep their own frame
+boundaries. Optimized mode, visible-page filtering, and one shared scheduler
+keep that work bounded to the gallery that is actually on screen.
+
+Cache generation is intentionally outside this live-performance contract. Full
+source duration may produce many disk frames; the import UI warns above 1,200
+estimated frames without silently changing user settings.
 
 ## Why normal Blender previews
 
@@ -470,8 +538,10 @@ minimum regression matrix is:
 - visible-page filtering; and
 - zero filesystem access during hot playback.
 
-This repository includes pure-Python cache tests and a Blender registration
-smoke test. Visual layout evaluation remains a manual host-application check.
+This repository includes pure-Python cache tests plus Blender registration,
+custom-location, full-range ingest, per-item refresh/trim, media-matrix, and
+modal-engine smoke tests. Visual layout evaluation remains a manual
+host-application check.
 
 ## License and dependency notes
 

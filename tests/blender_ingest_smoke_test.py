@@ -8,7 +8,10 @@ from pathlib import Path
 import addon_utils
 import bpy
 
-MODULE = "bl_ext.user_default.blender_animated_ui"
+MODULE = os.environ.get(
+    "ANIMTHUMB_MODULE",
+    "bl_ext.user_default.blender_animated_ui",
+)
 sample_path = os.environ.get("ANIMTHUMB_SAMPLE_MEDIA", "")
 if not sample_path:
     raise RuntimeError("ANIMTHUMB_SAMPLE_MEDIA is required")
@@ -55,6 +58,23 @@ source_duration_ms = int(metadata.get("source_duration_ms", 0))
 preview_duration_ms = int(metadata.get("preview_duration_ms", 0))
 if source_duration_ms <= 0 or preview_duration_ms <= 0:
     raise RuntimeError("Ingest did not record source and preview durations")
+duration_tolerance_ms = max(150, int(round(source_duration_ms * 0.05)))
+if abs(preview_duration_ms - source_duration_ms) > duration_tolerance_ms:
+    raise RuntimeError(
+        "Default ingest shortened the preview window: "
+        f"source={source_duration_ms}ms preview={preview_duration_ms}ms"
+    )
+if bool(metadata.get("trim_media", True)):
+    raise RuntimeError("Default ingest unexpectedly enabled Trim Media")
+cache_image_format = str(metadata.get("cache_image_format", "") or "")
+if cache_image_format not in {"JPEG", "WEBP"}:
+    raise RuntimeError(f"Unexpected optimized cache format: {cache_image_format}")
+extensions = {record.path.suffix.lower() for record in metadata["records"]}
+expected_extension = ".jpg" if cache_image_format == "JPEG" else ".webp"
+if extensions != {expected_extension}:
+    raise RuntimeError(
+        f"Cache format {cache_image_format} used unexpected files: {extensions}"
+    )
 cached = preview_cache.load_item(item)
 if cached is None:
     raise RuntimeError("Preview cache did not load")
@@ -108,6 +128,8 @@ print(
         "duration_ms": int(item.duration_ms),
         "source_duration_ms": source_duration_ms,
         "preview_duration_ms": preview_duration_ms,
+        "cache_image_format": cache_image_format,
+        "full_range_preserved": True,
         "target_fps": float(metadata["target_fps"]),
         "source_fps": source_fps,
         "sample_fps": float(metadata["sample_fps"]),

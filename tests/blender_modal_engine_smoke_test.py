@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
+import time
 
 import addon_utils
 import bpy
 
-MODULE = "bl_ext.user_default.blender_animated_ui"
+MODULE = os.environ.get(
+    "ANIMTHUMB_MODULE",
+    "bl_ext.user_default.blender_animated_ui",
+)
 sample_path = os.environ.get("ANIMTHUMB_SAMPLE_MEDIA", "")
 second_sample_path = os.environ.get("ANIMTHUMB_SECOND_MEDIA", "")
 preview_fps_setting = int(os.environ.get("ANIMTHUMB_PREVIEW_FPS", "60"))
@@ -64,11 +68,15 @@ with bpy.context.temp_override(
     )
     package.preview_engine.schedule_start()
 
+started_at = time.monotonic()
+started_tick = int(bpy.context.window_manager.animthumb_preview_tick)
+
 
 def verify_and_quit() -> None:
     running = bool(package.preview_engine._ENGINE_RUNNING)
     heartbeat = float(package.preview_engine._LAST_HEARTBEAT_MONOTONIC)
     preview_tick = int(bpy.context.window_manager.animthumb_preview_tick)
+    preview_tick_delta = (preview_tick - started_tick) % 1_000_000
     preview_fps = package.preview_engine.preview_frame_rate()
     display_rates = tuple(
         package.preview_cache.display_frame_rate(
@@ -78,24 +86,36 @@ def verify_and_quit() -> None:
         for item_id in item_ids
     )
     fastest_display_fps = max(display_rates, default=0.0)
-    maximum_expected_ticks = max(4, int(fastest_display_fps * 2.0) + 10)
+    maximum_scheduler_fps = min(
+        float(preview_fps),
+        sum(display_rates),
+    )
+    elapsed_seconds = max(0.001, time.monotonic() - started_at)
+    maximum_expected_ticks = max(
+        4,
+        int(maximum_scheduler_fps * elapsed_seconds) + 10,
+    )
     print(
         "ANIMTHUMB_MODAL_ENGINE",
         {
             "running": running,
             "heartbeat": heartbeat > 0.0,
             "preview_tick": preview_tick,
+            "preview_tick_delta": preview_tick_delta,
             "preview_fps": preview_fps,
             "effective_rates": effective_rates,
             "display_rates": display_rates,
+            "fastest_display_fps": fastest_display_fps,
+            "maximum_scheduler_fps": maximum_scheduler_fps,
+            "elapsed_seconds": elapsed_seconds,
             "maximum_expected_ticks": maximum_expected_ticks,
         },
     )
     if (
         not running
         or heartbeat <= 0.0
-        or preview_tick < 3
-        or preview_tick > maximum_expected_ticks
+        or preview_tick_delta < 3
+        or preview_tick_delta > maximum_expected_ticks
         or preview_fps != preview_fps_setting
     ):
         raise RuntimeError("The real-window modal preview engine did not advance")

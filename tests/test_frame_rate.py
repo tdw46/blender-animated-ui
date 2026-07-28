@@ -13,7 +13,6 @@ sys.modules.setdefault("blender_animated_ui", package)
 
 from blender_animated_ui.frame_rate import (  # noqa: E402
     active_display_fps,
-    bounded_sample_indices,
     clamp_preview_fps,
     effective_fps,
     frame_interval_ms,
@@ -36,9 +35,13 @@ class FrameRateTests(unittest.TestCase):
         self.assertEqual(frame_interval_ms(60), 17)
         self.assertEqual(sampled_clock_ms(255, 5), 200)
 
-    def test_long_media_uses_floor_instead_of_stretching_cache(self) -> None:
+    def test_long_media_keeps_requested_native_rate(self) -> None:
         self.assertEqual(target_sample_fps(1.0, 60, 60), 60.0)
-        self.assertEqual(target_sample_fps(10.0, 60, 60), 8.0)
+        self.assertEqual(target_sample_fps(10.0, 60, 60), 60.0)
+        self.assertEqual(
+            target_sample_fps(10.0, 60, 60, source_fps=30.0),
+            30.0,
+        )
         self.assertEqual(
             target_sample_fps(1.0, 60, 60, source_fps=12.0),
             12.0,
@@ -73,13 +76,6 @@ class FrameRateTests(unittest.TestCase):
             active_display_fps(4, source_fps=4, requested_fps=8),
             4.0,
         )
-
-    def test_sequence_sampling_is_evenly_bounded(self) -> None:
-        indices = bounded_sample_indices(100, 60)
-        self.assertEqual(len(indices), 60)
-        self.assertEqual(indices[0], 0)
-        self.assertEqual(indices[-1], 99)
-        self.assertEqual(len(set(indices)), 60)
 
 
 if __name__ == "__main__":

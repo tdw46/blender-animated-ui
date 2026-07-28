@@ -8,7 +8,10 @@ import os
 import addon_utils
 import bpy
 
-MODULE = "bl_ext.user_default.blender_animated_ui"
+MODULE = os.environ.get(
+    "ANIMTHUMB_MODULE",
+    "bl_ext.user_default.blender_animated_ui",
+)
 matrix = json.loads(os.environ.get("ANIMTHUMB_MEDIA_MATRIX", "{}"))
 required = {"video", "apng", "sequence"}
 if set(matrix) != required:
@@ -40,6 +43,27 @@ for media_type in ("video", "apng", "sequence"):
     )
     if int(result["frame_count"]) < 1:
         raise RuntimeError(f"{media_type} produced no cached frames")
+    if media_type == "sequence" and int(result["frame_count"]) != len(sources):
+        raise RuntimeError(
+            "Image sequence did not preserve every selected frame: "
+            f"{len(sources)} selected, {result['frame_count']} cached"
+        )
+    source_duration_ms = int(result["source_duration_ms"])
+    preview_duration_ms = int(result["duration_ms"])
+    duration_tolerance_ms = max(150, int(round(source_duration_ms * 0.05)))
+    if (
+        source_duration_ms > 0
+        and abs(preview_duration_ms - source_duration_ms) > duration_tolerance_ms
+    ):
+        raise RuntimeError(
+            f"{media_type} cache shortened its source window: "
+            f"{source_duration_ms}ms -> {preview_duration_ms}ms"
+        )
+    cache_image_format = str(result.get("cache_image_format", "") or "")
+    if cache_image_format not in {"JPEG", "WEBP"}:
+        raise RuntimeError(
+            f"{media_type} did not use an optimized cache format: {cache_image_format}"
+        )
     result_ids.append(str(result["item_id"]))
     source_fps = float(result["source_fps"])
     effective_fps = float(result["effective_fps"])
@@ -52,8 +76,9 @@ for media_type in ("video", "apng", "sequence"):
             raise RuntimeError(f"{media_type} fell below the 8 FPS floor")
     results[media_type] = {
         "frame_count": int(result["frame_count"]),
-        "duration_ms": int(result["duration_ms"]),
-        "source_duration_ms": int(result["source_duration_ms"]),
+        "duration_ms": preview_duration_ms,
+        "source_duration_ms": source_duration_ms,
+        "cache_image_format": cache_image_format,
         "target_fps": int(result["target_fps"]),
         "source_fps": source_fps,
         "sample_fps": float(result["sample_fps"]),

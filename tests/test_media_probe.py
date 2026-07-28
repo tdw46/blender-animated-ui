@@ -25,10 +25,24 @@ class MediaProbeTests(unittest.TestCase):
         self.assertEqual(result.duration_seconds, 2.5)
         self.assertEqual((result.width, result.height), (1920, 1080))
         self.assertAlmostEqual(result.source_fps, 23.976)
+        self.assertFalse(result.has_alpha)
+        self.assertEqual(result.frame_count, 0)
 
     def test_missing_rate_is_explicitly_unknown(self) -> None:
         result = parse_ffmpeg_probe("Stream #0:0: Video: png, rgba, 512x512")
         self.assertEqual(result.source_fps, 0.0)
+        self.assertTrue(result.has_alpha)
+        self.assertEqual(result.frame_count, 0)
+
+    def test_parses_terminal_frame_count(self) -> None:
+        result = parse_ffmpeg_probe(
+            """
+            Duration: N/A, bitrate: N/A
+            Stream #0:0: Video: apng, rgba, 128x96, 12 fps
+            frame=   24 fps=0.0 q=-1.0 time=00:00:01.99
+            """
+        )
+        self.assertEqual(result.frame_count, 24)
 
 
 if __name__ == "__main__":

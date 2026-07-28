@@ -67,10 +67,10 @@ def register_properties() -> None:
         update=_update_gallery_settings,
     )
     bpy.types.WindowManager.animthumb_preview_fps = IntProperty(
-        name="Maximum Preview FPS",
+        name="Live Playback FPS Ceiling",
         description=(
-            "Playback and ingest ceiling from 8 to 60 FPS; genuinely slower "
-            "media remains capped by its native frame rate"
+            "Maximum live gallery redraw and playback rate from 8 to 60 FPS; "
+            "import sampling is configured per media item"
         ),
         default=DEFAULT_PREVIEW_FPS,
         min=MIN_PREVIEW_FPS,
