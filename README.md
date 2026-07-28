@@ -536,7 +536,9 @@ the real media end when a caller cannot pre-probe it.
 
 The default profile resolver uses JPEG quality level 3 for opaque sources and
 WebP quality 82/compression level 4 for sources with alpha. JPEG receives black
-letterboxing; WebP receives transparent letterboxing.
+letterboxing; WebP receives transparent letterboxing. Transparent VP8/VP9 WebM
+files are recognized from their WebM alpha metadata and decoded through libvpx
+so their separate alpha stream reaches the cached WebP frames.
 
 An integration can replace those settings without forking the pipeline:
 

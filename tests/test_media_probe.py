@@ -11,7 +11,8 @@ package = types.ModuleType("blender_animated_ui")
 package.__path__ = [str(ROOT)]
 sys.modules.setdefault("blender_animated_ui", package)
 
-from blender_animated_ui.media_probe import parse_ffmpeg_probe  # noqa: E402
+from blender_animated_ui.media_ingest import _alpha_decoder_name  # noqa: E402
+from blender_animated_ui.media_probe import MediaProbe, parse_ffmpeg_probe  # noqa: E402
 
 
 class MediaProbeTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class MediaProbeTests(unittest.TestCase):
         self.assertAlmostEqual(result.source_fps, 23.976)
         self.assertFalse(result.has_alpha)
         self.assertEqual(result.frame_count, 0)
+        self.assertEqual(result.video_codec, "h264")
 
     def test_missing_rate_is_explicitly_unknown(self) -> None:
         result = parse_ffmpeg_probe("Stream #0:0: Video: png, rgba, 512x512")
@@ -43,6 +45,33 @@ class MediaProbeTests(unittest.TestCase):
             """
         )
         self.assertEqual(result.frame_count, 24)
+
+    def test_webm_alpha_metadata_is_detected_despite_opaque_pixel_format(self) -> None:
+        result = parse_ffmpeg_probe(
+            """
+            Stream #0:0: Video: vp9 (Profile 0), yuv420p, 1024x1024, 30 fps
+              Metadata:
+                alpha_mode      : 1
+            """
+        )
+        self.assertTrue(result.has_alpha)
+        self.assertEqual(result.video_codec, "vp9")
+
+    def test_transparent_webm_selects_the_alpha_capable_decoder(self) -> None:
+        probe = MediaProbe(
+            duration_seconds=1.0,
+            width=192,
+            height=192,
+            source_fps=30.0,
+            has_alpha=True,
+            frame_count=30,
+            video_codec="vp9",
+        )
+        self.assertEqual(
+            _alpha_decoder_name(Path("transparent.webm"), probe),
+            "libvpx-vp9",
+        )
+        self.assertEqual(_alpha_decoder_name(Path("transparent.mp4"), probe), "")
 
 
 if __name__ == "__main__":

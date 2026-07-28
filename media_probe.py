@@ -14,6 +14,14 @@ _FRAME_RATE_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _FRAME_COUNT_PATTERN = re.compile(r"\bframe=\s*(?P<count>\d+)")
+_VIDEO_CODEC_PATTERN = re.compile(
+    r"\bVideo:\s*(?P<codec>[A-Za-z0-9_+.-]+)",
+    flags=re.IGNORECASE,
+)
+_ALPHA_MODE_PATTERN = re.compile(
+    r"\balpha_mode\b\s*:\s*(?P<value>[^\s,;]+)",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +32,7 @@ class MediaProbe:
     source_fps: float
     has_alpha: bool
     frame_count: int
+    video_codec: str = ""
 
 
 def parse_ffmpeg_probe(output: str) -> MediaProbe:
@@ -68,10 +77,22 @@ def parse_ffmpeg_probe(output: str) -> MediaProbe:
         "ya8",
         "pal8",
     )
-    has_alpha = any(
+    pixel_format_has_alpha = any(
         alpha_format in line.casefold()
         for line in video_lines
         for alpha_format in alpha_formats
+    )
+    alpha_mode_has_alpha = any(
+        match.group("value").strip().casefold() not in {"", "0", "false", "no"}
+        for match in _ALPHA_MODE_PATTERN.finditer(text)
+    )
+    codec_match = next(
+        (
+            match
+            for line in video_lines
+            if (match := _VIDEO_CODEC_PATTERN.search(line)) is not None
+        ),
+        None,
     )
     frame_counts = tuple(
         int(match.group("count")) for match in _FRAME_COUNT_PATTERN.finditer(text)
@@ -81,6 +102,7 @@ def parse_ffmpeg_probe(output: str) -> MediaProbe:
         width=max(0, width),
         height=max(0, height),
         source_fps=max(0.0, source_fps),
-        has_alpha=has_alpha,
+        has_alpha=pixel_format_has_alpha or alpha_mode_has_alpha,
         frame_count=max(frame_counts, default=0),
+        video_codec=(codec_match.group("codec").casefold() if codec_match else ""),
     )

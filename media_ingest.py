@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 
 from .cache_format import (
@@ -138,8 +139,37 @@ def _sequence_input_args(
     return ["-f", "concat", "-safe", "0", "-i", str(concat_path)]
 
 
-def _single_input_args(source_path: Path) -> list[str]:
-    return ["-i", str(source_path)]
+def _alpha_decoder_name(source_path: Path, probe: MediaProbe) -> str:
+    """Return the decoder required to expose WebM's separate alpha stream."""
+    if not probe.has_alpha or source_path.suffix.casefold() not in {".webm", ".mkv"}:
+        return ""
+    return {
+        "vp8": "libvpx",
+        "vp9": "libvpx-vp9",
+    }.get(probe.video_codec.casefold(), "")
+
+
+@lru_cache(maxsize=8)
+def _ffmpeg_decoder_available(executable: str, decoder: str) -> bool:
+    if not decoder:
+        return True
+    result = subprocess.run(
+        [executable, "-hide_banner", "-decoders"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return result.returncode == 0 and decoder in result.stdout.split()
+
+
+def _single_input_args(
+    source_path: Path,
+    *,
+    decoder: str = "",
+) -> list[str]:
+    decoder_args = ["-c:v", decoder] if decoder else []
+    return [*decoder_args, "-i", str(source_path)]
 
 
 def probe_media(executable: str, source_path: str | Path) -> MediaProbe:
@@ -164,6 +194,7 @@ def probe_media(executable: str, source_path: str | Path) -> MediaProbe:
                 source_fps=counted.source_fps,
                 has_alpha=counted.has_alpha,
                 frame_count=counted.frame_count,
+                video_codec=counted.video_codec,
             )
     return probe
 
@@ -258,20 +289,22 @@ def _build_conversion_plan(
     source_duration_seconds = (
         len(sources) / float(settings.target_fps) if is_sequence else 0.0
     )
-    input_args = (
-        _sequence_input_args(
+    if is_sequence:
+        input_args = _sequence_input_args(
             sequence_sources,
             staging_dir,
             1.0 / float(settings.target_fps),
         )
-        if is_sequence
-        else _single_input_args(sources[0])
-    )
-    probe = (
-        _ffmpeg_probe(executable, input_args)
-        if is_sequence
-        else probe_media(executable, sources[0])
-    )
+        probe = _ffmpeg_probe(executable, input_args)
+    else:
+        probe = probe_media(executable, sources[0])
+        decoder = _alpha_decoder_name(sources[0], probe)
+        if decoder and not _ffmpeg_decoder_available(executable, decoder):
+            raise RuntimeError(
+                f"FFmpeg decoder {decoder!r} is required to preserve "
+                f"{probe.video_codec.upper()} WebM transparency"
+            )
+        input_args = _single_input_args(sources[0], decoder=decoder)
     if not is_sequence:
         source_duration_seconds = probe.duration_seconds
     source_fps = 0.0 if is_sequence else probe.source_fps
