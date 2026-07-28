@@ -95,6 +95,31 @@ def verify_and_quit() -> None:
         4,
         int(maximum_scheduler_fps * elapsed_seconds) + 10,
     )
+    loaded_before_tab_switch = {
+        item_id: package.preview_cache.loaded_frame_count(item_id)
+        for item_id in item_ids
+    }
+    for target in package.preview_engine._UI_REGION_TARGETS.values():
+        target["last_seen"] = (
+            time.monotonic() - package.constants.PREVIEW_UI_TARGET_STALE_SECONDS - 1.0
+        )
+    live_ids_after_tab_switch = package.preview_engine.visible_item_ids()
+    warm_ids_after_tab_switch = package.preview_engine.warm_item_ids()
+    package.preview_cache.trim_offscreen_items(
+        warm_ids_after_tab_switch,
+        now_monotonic=(
+            time.monotonic() + package.constants.PREVIEW_OFFSCREEN_GRACE_SECONDS + 1.0
+        ),
+    )
+    loaded_after_tab_switch = {
+        item_id: package.preview_cache.loaded_frame_count(item_id)
+        for item_id in item_ids
+    }
+    warm_cache_preserved = bool(
+        not live_ids_after_tab_switch
+        and set(warm_ids_after_tab_switch) == set(item_ids)
+        and loaded_after_tab_switch == loaded_before_tab_switch
+    )
     print(
         "ANIMTHUMB_MODAL_ENGINE",
         {
@@ -109,6 +134,8 @@ def verify_and_quit() -> None:
             "maximum_scheduler_fps": maximum_scheduler_fps,
             "elapsed_seconds": elapsed_seconds,
             "maximum_expected_ticks": maximum_expected_ticks,
+            "warm_cache_preserved": warm_cache_preserved,
+            "warm_loaded_frames": loaded_after_tab_switch,
         },
     )
     if (
@@ -117,6 +144,7 @@ def verify_and_quit() -> None:
         or preview_tick_delta < 3
         or preview_tick_delta > maximum_expected_ticks
         or preview_fps != preview_fps_setting
+        or not warm_cache_preserved
     ):
         raise RuntimeError("The real-window modal preview engine did not advance")
     package.preview_engine.stop()

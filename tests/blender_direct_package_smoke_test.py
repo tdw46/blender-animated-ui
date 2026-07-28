@@ -67,6 +67,7 @@ try:
         raise RuntimeError("No-op library refresh changed the preview collection")
 
     loaded = {}
+    cache_dimensions = {}
     for item_id in result_ids:
         item = next(
             item
@@ -77,6 +78,23 @@ try:
         if cached is None or len(cached.records) < 2:
             raise RuntimeError(f"Preview cache did not load for {item_id}")
         loaded[item_id] = len(cached.records)
+        image = bpy.data.images.load(
+            str(cached.records[0].path),
+            check_existing=False,
+        )
+        try:
+            dimensions = tuple(int(value) for value in image.size)
+        finally:
+            bpy.data.images.remove(image)
+        if dimensions != (
+            package.constants.MAX_THUMBNAIL_EDGE,
+            package.constants.MAX_THUMBNAIL_EDGE,
+        ):
+            raise RuntimeError(
+                f"Preview cache dimensions are {dimensions}, expected "
+                f"{package.constants.MAX_THUMBNAIL_EDGE} square"
+            )
+        cache_dimensions[item_id] = dimensions
 
     print(
         "ANIMTHUMB_DIRECT_PACKAGE",
@@ -84,6 +102,7 @@ try:
             "version": tuple(bpy.app.version),
             "formats": list(expected_formats),
             "loaded_frame_counts": loaded,
+            "cache_dimensions": cache_dimensions,
         },
     )
 finally:

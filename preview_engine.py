@@ -37,6 +37,7 @@ _VIEWPORT_TRANSFORM_ACTIVE = False
 _ANIMATION_PLAYBACK_ACTIVE = False
 _HOST_WINDOW_PTR = 0
 _UI_REGION_TARGETS: dict[int, dict] = {}
+_WARM_ITEM_IDS: tuple[str, ...] = ()
 _MACOS_BUTTON_QUERY = None
 _MACOS_BUTTON_QUERY_INITIALIZED = False
 
@@ -56,6 +57,7 @@ def preview_clock_ms() -> int:
 
 def register_ui_region(context, visible_item_ids: tuple[str, ...]) -> None:
     global _HOST_WINDOW_PTR
+    global _WARM_ITEM_IDS
     window = getattr(context, "window", None)
     area = getattr(context, "area", None)
     region = getattr(context, "region", None)
@@ -70,18 +72,20 @@ def register_ui_region(context, visible_item_ids: tuple[str, ...]) -> None:
     region_ptr = _rna_pointer(region)
     if region_ptr == 0:
         return
+    resolved_visible_ids = tuple(dict.fromkeys(visible_item_ids))
+    _WARM_ITEM_IDS = resolved_visible_ids
     _UI_REGION_TARGETS[region_ptr] = {
         "window_ptr": _rna_pointer(window),
         "area_ptr": _rna_pointer(area),
         "scene_ptr": _rna_pointer(scene),
-        "visible_item_ids": tuple(dict.fromkeys(visible_item_ids)),
+        "visible_item_ids": resolved_visible_ids,
         "last_seen": time.monotonic(),
     }
-    if visible_item_ids:
+    if resolved_visible_ids:
         from . import preview_cache
 
         preview_cache.service_visible_items(
-            tuple(dict.fromkeys(visible_item_ids)),
+            resolved_visible_ids,
             current_preview_ms(),
             fps_limit=preview_frame_rate(),
         )
@@ -138,6 +142,15 @@ def visible_item_ids() -> tuple[str, ...]:
                 ids.append(item_id)
                 seen.add(item_id)
     return tuple(ids)
+
+
+def warm_item_ids() -> tuple[str, ...]:
+    """Return the last drawn gallery page, even while its N-panel tab is hidden."""
+    from . import preview_cache
+
+    return tuple(
+        item_id for item_id in _WARM_ITEM_IDS if preview_cache.is_loaded(item_id)
+    )
 
 
 def tag_targeted_redraw(item_ids: set[str] | None = None) -> None:
@@ -421,10 +434,12 @@ def _playback_post_handler(*_args) -> None:
 
 @persistent
 def _load_post_handler(*_args) -> None:
+    global _WARM_ITEM_IDS
     from . import library
 
     stop()
     _UI_REGION_TARGETS.clear()
+    _WARM_ITEM_IDS = ()
     library.schedule_startup_refresh()
 
 
@@ -452,7 +467,7 @@ def _watchdog_tick() -> float:
     ids = visible_item_ids()
     from . import preview_cache
 
-    preview_cache.trim_offscreen_items(ids)
+    preview_cache.trim_offscreen_items(warm_item_ids())
     if ids and not _engine_responsive():
         if _ENGINE_RUNNING:
             stop()
@@ -724,6 +739,9 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                         fps_limit=fps_limit,
                     )
                 )
+            else:
+                _LAST_SIGNATURE = None
+                self._schedule_interval(PREVIEW_HEALTH_CHECK_INTERVAL_SECONDS)
             return {"PASS_THROUGH"}
         _mark_interaction(context, event)
         return {"PASS_THROUGH"}
@@ -751,6 +769,7 @@ def register_runtime() -> None:
 def unregister_runtime() -> None:
     global _ENGINE_START_SCHEDULED
     global _WATCHDOG_RUNNING
+    global _WARM_ITEM_IDS
     stop()
     handlers = (
         ("load_post", _load_post_handler),
@@ -772,3 +791,4 @@ def unregister_runtime() -> None:
     _ENGINE_START_SCHEDULED = False
     _WATCHDOG_RUNNING = False
     _UI_REGION_TARGETS.clear()
+    _WARM_ITEM_IDS = ()
