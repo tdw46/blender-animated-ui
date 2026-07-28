@@ -91,6 +91,12 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
         )
         layout.prop(
             wm,
+            "animthumb_preview_fps",
+            text="Preview Frame Rate",
+            slider=True,
+        )
+        layout.prop(
+            wm,
             "animthumb_optimized_playback",
             text="Optimized Playback Mode",
         )
@@ -210,6 +216,7 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
         _preview_tick = int(getattr(wm, "animthumb_preview_tick", 0) or 0)
         del _preview_tick
         now_ms = preview_engine.current_preview_ms()
+        preview_fps = preview_engine.preview_frame_rate()
         metrics = gallery_layout_metrics(
             context,
             max(1, int(getattr(context.region, "width", 300) or 300)),
@@ -243,7 +250,11 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                     ui_units_x,
                     row_title_lines,
                 )
-                icon_id = preview_cache.icon_id(str(item.item_id), now_ms)
+                icon_id = preview_cache.icon_id(
+                    str(item.item_id),
+                    now_ms,
+                    fps_limit=preview_fps,
+                )
                 thumbnail_row = column.row(align=True)
                 thumbnail_row.scale_y = 0.78
                 if icon_id:

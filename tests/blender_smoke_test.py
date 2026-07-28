@@ -14,9 +14,13 @@ if not hasattr(bpy.types.Scene, "animthumb_items"):
     raise RuntimeError("Animated thumbnail Scene collection did not register")
 if not hasattr(bpy.types.WindowManager, "animthumb_optimized_playback"):
     raise RuntimeError("Optimized playback setting did not register")
+if not hasattr(bpy.types.WindowManager, "animthumb_preview_fps"):
+    raise RuntimeError("Preview frame-rate setting did not register")
 
 scene = bpy.context.scene
 scene.animthumb_gallery_page = 0
+if bpy.context.window_manager.animthumb_preview_fps != 10:
+    raise RuntimeError("Preview frame-rate setting has the wrong default")
 print(
     "ANIMTHUMB_SMOKE",
     {
@@ -24,10 +28,13 @@ print(
         "panel": True,
         "scene_properties": True,
         "optimized_mode": True,
+        "preview_fps": int(bpy.context.window_manager.animthumb_preview_fps),
     },
 )
 
 addon_utils.disable(MODULE)
 if hasattr(bpy.types.Scene, "animthumb_items"):
     raise RuntimeError("Animated thumbnail Scene collection did not unregister")
+if hasattr(bpy.types.WindowManager, "animthumb_preview_fps"):
+    raise RuntimeError("Preview frame-rate setting did not unregister")
 print("ANIMTHUMB_SMOKE_UNREGISTERED", True)

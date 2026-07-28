@@ -120,6 +120,9 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
             result = ingest_media(
                 str(dependency_status.get("executable", "") or ""),
                 selected,
+                target_fps=int(
+                    getattr(context.window_manager, "animthumb_preview_fps", 10) or 10
+                ),
             )
         except Exception as error:
             _set_status(context, str(error), "ERROR")
@@ -132,7 +135,8 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         _set_status(
             context,
             (
-                f"Added {result['name']}: {result['frame_count']} cached frames, "
+                f"Added {result['name']}: {result['frame_count']} cached frames "
+                f"at {float(result['effective_fps']):.2f} FPS, "
                 f"{result['duration_ms']} ms"
             ),
         )

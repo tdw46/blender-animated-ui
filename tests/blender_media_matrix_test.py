@@ -27,6 +27,7 @@ if not executable:
     raise RuntimeError("FFmpeg is unavailable")
 
 results = {}
+result_ids = []
 for media_type in ("video", "apng", "sequence"):
     sources = matrix[media_type]
     if isinstance(sources, str):
@@ -35,17 +36,23 @@ for media_type in ("video", "apng", "sequence"):
         executable,
         sources,
         display_name=f"Matrix {media_type}",
+        target_fps=12,
     )
     if int(result["frame_count"]) < 1:
         raise RuntimeError(f"{media_type} produced no cached frames")
+    result_ids.append(str(result["item_id"]))
     results[media_type] = {
         "frame_count": int(result["frame_count"]),
         "duration_ms": int(result["duration_ms"]),
+        "target_fps": int(result["target_fps"]),
+        "effective_fps": float(result["effective_fps"]),
     }
 
 library_count = package.library.refresh_scene(bpy.context.scene)
-if library_count != 3:
-    raise RuntimeError(f"Expected three caches, found {library_count}")
+loaded_ids = {str(item.item_id) for item in bpy.context.scene.animthumb_items}
+missing_ids = sorted(set(result_ids) - loaded_ids)
+if missing_ids:
+    raise RuntimeError(f"Generated caches were not discovered: {missing_ids}")
 print(
     "ANIMTHUMB_MEDIA_MATRIX",
     {
@@ -53,4 +60,7 @@ print(
         "library_count": library_count,
     },
 )
+for item_id in result_ids:
+    if not package.library.remove_item(item_id):
+        raise RuntimeError(f"Media matrix cache cleanup failed: {item_id}")
 addon_utils.disable(MODULE)

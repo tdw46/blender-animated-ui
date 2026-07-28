@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 import shutil
 import subprocess
@@ -18,10 +17,15 @@ from .cache_format import (
     write_metadata,
 )
 from .constants import (
+    DEFAULT_PREVIEW_FPS,
     DEFAULT_STATIC_FRAME_MS,
     MAX_SAMPLED_FRAMES,
     MAX_THUMBNAIL_EDGE,
-    TARGET_FRAME_MS,
+)
+from .frame_rate import (
+    clamp_preview_fps,
+    frame_interval_ms,
+    target_sample_fps,
 )
 from .paths import cache_root
 
@@ -77,12 +81,13 @@ def _escape_concat_path(path: Path) -> str:
 def _sequence_input_args(
     source_paths: tuple[Path, ...],
     staging_dir: Path,
+    target_fps: int,
 ) -> list[str]:
     concat_path = staging_dir / "sequence.ffconcat"
     lines = ["ffconcat version 1.0"]
     for path in source_paths:
         lines.append(f"file '{_escape_concat_path(path)}'")
-        lines.append(f"duration {TARGET_FRAME_MS / 1000.0:.6f}")
+        lines.append(f"duration {1.0 / float(target_fps):.9f}")
     lines.append(f"file '{_escape_concat_path(source_paths[-1])}'")
     concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return ["-f", "concat", "-safe", "0", "-i", str(concat_path)]
@@ -92,20 +97,14 @@ def _single_input_args(source_path: Path) -> list[str]:
     return ["-i", str(source_path)]
 
 
-def _sample_fps(duration_seconds: float) -> float:
-    target_fps = 1000.0 / float(TARGET_FRAME_MS)
-    if duration_seconds <= 0.0:
-        return target_fps
-    duration_limited_fps = MAX_SAMPLED_FRAMES / duration_seconds
-    return max(0.01, min(target_fps, duration_limited_fps))
-
-
 def ingest_media(
     executable: str,
     source_paths: Iterable[str | Path],
     *,
     display_name: str = "",
+    target_fps: int = DEFAULT_PREVIEW_FPS,
 ) -> dict[str, object]:
+    resolved_target_fps = clamp_preview_fps(target_fps)
     sources = tuple(Path(path).expanduser().resolve() for path in source_paths)
     if not sources:
         raise ValueError("No media files were selected")
@@ -125,7 +124,7 @@ def ingest_media(
 
     try:
         input_args = (
-            _sequence_input_args(sources, staging_dir)
+            _sequence_input_args(sources, staging_dir, resolved_target_fps)
             if len(sources) > 1
             else _single_input_args(sources[0])
         )
@@ -133,10 +132,14 @@ def ingest_media(
         if len(sources) > 1:
             duration_seconds = max(
                 duration_seconds,
-                (len(sources) * TARGET_FRAME_MS) / 1000.0,
+                len(sources) / float(resolved_target_fps),
             )
 
-        sample_fps = _sample_fps(duration_seconds)
+        sample_fps = target_sample_fps(
+            duration_seconds,
+            resolved_target_fps,
+            MAX_SAMPLED_FRAMES,
+        )
         output_pattern = staging_dir / "raw_%05d.png"
         filter_chain = (
             f"fps={sample_fps:.8f},"
@@ -179,9 +182,9 @@ def ingest_media(
 
         if duration_seconds > 0.0:
             total_ms = max(1, int(round(duration_seconds * 1000.0)))
-            frame_duration_ms = max(1, int(math.ceil(total_ms / len(raw_frames))))
+            frame_duration_ms = max(1, int(round(total_ms / len(raw_frames))))
         elif len(raw_frames) > 1:
-            frame_duration_ms = TARGET_FRAME_MS
+            frame_duration_ms = frame_interval_ms(resolved_target_fps)
         else:
             frame_duration_ms = DEFAULT_STATIC_FRAME_MS
 
@@ -202,6 +205,7 @@ def ingest_media(
             records=records,
             width=width,
             height=height,
+            target_fps=resolved_target_fps,
         )
 
         final_dir = root / f"{safe_name}_{item_id}"
@@ -227,6 +231,12 @@ def ingest_media(
             "duration_ms": records[-1].end_ms,
             "width": width,
             "height": height,
+            "target_fps": resolved_target_fps,
+            "effective_fps": (
+                (len(records) * 1000.0) / records[-1].end_ms
+                if len(records) > 1
+                else 0.0
+            ),
         }
     finally:
         if staging_dir.exists():

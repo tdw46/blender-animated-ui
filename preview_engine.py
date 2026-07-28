@@ -155,6 +155,13 @@ def current_preview_ms() -> int:
     return int(_NOW_MS or preview_clock_ms())
 
 
+def preview_frame_rate() -> int:
+    from .frame_rate import clamp_preview_fps
+
+    wm = getattr(bpy.context, "window_manager", None)
+    return clamp_preview_fps(getattr(wm, "animthumb_preview_fps", None))
+
+
 def _host_window():
     wm = getattr(bpy.context, "window_manager", None)
     if wm is None:
@@ -496,6 +503,8 @@ def schedule_start() -> None:
 
 
 def request_fast_reschedule() -> None:
+    global _LAST_SIGNATURE
+    _LAST_SIGNATURE = None
     instance = _ENGINE_INSTANCE
     if instance is not None:
         instance._schedule_interval(PREVIEW_TIMER_INTERVAL_SECONDS)
@@ -608,7 +617,11 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
         from . import preview_cache
 
         ids = visible_item_ids()
-        initial_interval = preview_cache.next_interval_seconds(ids, preview_clock_ms())
+        initial_interval = preview_cache.next_interval_seconds(
+            ids,
+            preview_clock_ms(),
+            fps_limit=preview_frame_rate(),
+        )
         self._schedule_interval(initial_interval)
         if self._timer is None:
             return {"CANCELLED"}
@@ -650,7 +663,12 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                 from . import preview_cache
 
                 now_ms = preview_clock_ms()
-                signature = preview_cache.frame_signature(ids, now_ms)
+                fps_limit = preview_frame_rate()
+                signature = preview_cache.frame_signature(
+                    ids,
+                    now_ms,
+                    fps_limit=fps_limit,
+                )
                 if signature != _LAST_SIGNATURE:
                     _LAST_SIGNATURE = signature
                     _NOW_MS = now_ms
@@ -661,7 +679,11 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                         ) % 1_000_000
                     tag_targeted_redraw()
                 self._schedule_interval(
-                    preview_cache.next_interval_seconds(ids, now_ms)
+                    preview_cache.next_interval_seconds(
+                        ids,
+                        now_ms,
+                        fps_limit=fps_limit,
+                    )
                 )
             return {"PASS_THROUGH"}
         _mark_interaction(context, event)

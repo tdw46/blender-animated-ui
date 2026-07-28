@@ -59,10 +59,13 @@ class CacheFormatTests(unittest.TestCase):
                 records=records,
                 width=320,
                 height=180,
+                target_fps=12,
             )
             metadata = read_metadata(cache_dir)
             self.assertEqual(metadata["item_id"], "test")
             self.assertEqual(metadata["duration_ms"], 300)
+            self.assertEqual(metadata["target_fps"], 12.0)
+            self.assertEqual(metadata["effective_fps"], 10.0)
             self.assertEqual(len(metadata["records"]), 3)
 
     def test_item_id_is_stable(self) -> None:

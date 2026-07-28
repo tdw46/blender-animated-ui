@@ -8,6 +8,7 @@ from pathlib import Path
 from bpy.utils import previews
 
 from .cache_format import FrameRecord, read_metadata
+from .frame_rate import sample_wait_ms, sampled_clock_ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,33 +112,59 @@ def is_loaded(item_id: str) -> bool:
     return str(item_id) in _ITEMS
 
 
-def frame_index(item_id: str, now_ms: int) -> int:
+def frame_index(
+    item_id: str,
+    now_ms: int,
+    *,
+    fps_limit: int | float | None = None,
+) -> int:
     cached = _ITEMS.get(str(item_id))
     if cached is None or not cached.records:
         return 0
-    loop_ms = int(now_ms) % cached.duration_ms
+    loop_ms = sampled_clock_ms(now_ms, fps_limit) % cached.duration_ms
     for record in cached.records:
         if record.start_ms <= loop_ms < record.end_ms:
             return record.index
     return cached.records[-1].index
 
 
-def milliseconds_until_next_frame(item_id: str, now_ms: int) -> int:
+def milliseconds_until_next_frame(
+    item_id: str,
+    now_ms: int,
+    *,
+    fps_limit: int | float | None = None,
+) -> int:
     cached = _ITEMS.get(str(item_id))
     if cached is None or len(cached.records) <= 1:
         return 500
-    loop_ms = int(now_ms) % cached.duration_ms
+    sampled_now_ms = sampled_clock_ms(now_ms, fps_limit)
+    loop_ms = sampled_now_ms % cached.duration_ms
     for record in cached.records:
         if record.start_ms <= loop_ms < record.end_ms:
-            return max(1, record.end_ms - loop_ms)
-    return max(1, cached.duration_ms - loop_ms + cached.records[0].end_ms)
+            return sample_wait_ms(
+                now_ms,
+                sampled_now_ms,
+                record.end_ms - loop_ms,
+                fps_limit,
+            )
+    return sample_wait_ms(
+        now_ms,
+        sampled_now_ms,
+        cached.duration_ms - loop_ms + cached.records[0].end_ms,
+        fps_limit,
+    )
 
 
-def icon_id(item_id: str, now_ms: int) -> int:
+def icon_id(
+    item_id: str,
+    now_ms: int,
+    *,
+    fps_limit: int | float | None = None,
+) -> int:
     cached = _ITEMS.get(str(item_id))
     if cached is None or _COLLECTION is None:
         return 0
-    index = frame_index(item_id, now_ms)
+    index = frame_index(item_id, now_ms, fps_limit=fps_limit)
     key = _icon_key(item_id, index)
     try:
         if key in _COLLECTION:
@@ -154,17 +181,28 @@ def icon_id(item_id: str, now_ms: int) -> int:
 def frame_signature(
     item_ids: tuple[str, ...],
     now_ms: int,
+    *,
+    fps_limit: int | float | None = None,
 ) -> tuple[tuple[str, int], ...]:
     return tuple(
-        (item_id, frame_index(item_id, now_ms))
+        (item_id, frame_index(item_id, now_ms, fps_limit=fps_limit))
         for item_id in item_ids
         if item_id in _ITEMS and len(_ITEMS[item_id].records) > 1
     )
 
 
-def next_interval_seconds(item_ids: tuple[str, ...], now_ms: int) -> float:
+def next_interval_seconds(
+    item_ids: tuple[str, ...],
+    now_ms: int,
+    *,
+    fps_limit: int | float | None = None,
+) -> float:
     waits = [
-        milliseconds_until_next_frame(item_id, now_ms)
+        milliseconds_until_next_frame(
+            item_id,
+            now_ms,
+            fps_limit=fps_limit,
+        )
         for item_id in item_ids
         if item_id in _ITEMS and len(_ITEMS[item_id].records) > 1
     ]

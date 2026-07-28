@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .constants import CACHE_SCHEMA_VERSION, DEFAULT_STATIC_FRAME_MS
+from .frame_rate import effective_fps
 
 _FRAME_PATTERN = re.compile(
     r"^frame_(?P<index>\d+)__(?P<start>\d+)_(?P<end>\d+)\.png$",
@@ -94,8 +95,10 @@ def write_metadata(
     records: Iterable[FrameRecord],
     width: int,
     height: int,
+    target_fps: int | float | None = None,
 ) -> Path:
     resolved_records = tuple(records)
+    duration_ms = max(1, int(resolved_records[-1].end_ms)) if resolved_records else 0
     payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "item_id": item_id,
@@ -103,8 +106,10 @@ def write_metadata(
         "source_paths": [str(Path(path).resolve()) for path in source_paths],
         "width": max(0, int(width)),
         "height": max(0, int(height)),
-        "duration_ms": (
-            max(1, int(resolved_records[-1].end_ms)) if resolved_records else 0
+        "duration_ms": duration_ms,
+        "effective_fps": round(
+            effective_fps(len(resolved_records), duration_ms),
+            6,
         ),
         "frames": [
             {
@@ -116,6 +121,8 @@ def write_metadata(
             for record in resolved_records
         ],
     }
+    if target_fps is not None:
+        payload["target_fps"] = max(0.0, float(target_fps))
     metadata_path = cache_dir / "metadata.json"
     temporary_path = cache_dir / "metadata.json.tmp"
     temporary_path.write_text(

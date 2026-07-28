@@ -11,6 +11,8 @@ from bpy.props import (
     StringProperty,
 )
 
+from .constants import DEFAULT_PREVIEW_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
+
 
 def _update_gallery_settings(_owner, _context) -> None:
     from . import preview_engine, ui_gallery
@@ -56,6 +58,20 @@ def register_properties() -> None:
         precision=2,
         update=_update_gallery_settings,
     )
+    bpy.types.WindowManager.animthumb_preview_fps = IntProperty(
+        name="Preview Frame Rate",
+        description=(
+            "Maximum live thumbnail sampling rate and target frame rate for "
+            "newly generated caches"
+        ),
+        default=DEFAULT_PREVIEW_FPS,
+        min=MIN_PREVIEW_FPS,
+        max=MAX_PREVIEW_FPS,
+        soft_min=MIN_PREVIEW_FPS,
+        soft_max=MAX_PREVIEW_FPS,
+        step=1,
+        update=_update_gallery_settings,
+    )
     bpy.types.WindowManager.animthumb_optimized_playback = BoolProperty(
         name="Optimized Playback Mode",
         description=(
@@ -81,6 +97,7 @@ def unregister_properties() -> None:
         (bpy.types.WindowManager, "animthumb_status_level"),
         (bpy.types.WindowManager, "animthumb_status"),
         (bpy.types.WindowManager, "animthumb_optimized_playback"),
+        (bpy.types.WindowManager, "animthumb_preview_fps"),
         (bpy.types.WindowManager, "animthumb_thumbnail_scale"),
         (bpy.types.WindowManager, "animthumb_preview_tick"),
         (bpy.types.Scene, "animthumb_gallery_page"),
