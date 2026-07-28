@@ -48,9 +48,12 @@ for media_type in ("video", "apng", "sequence"):
             raise RuntimeError(f"{media_type} source FPS was not detected")
         if effective_fps > source_fps * 1.15:
             raise RuntimeError(f"{media_type} was upsampled beyond its source FPS")
+        if source_fps >= 8.0 and effective_fps < 7.5:
+            raise RuntimeError(f"{media_type} fell below the 8 FPS floor")
     results[media_type] = {
         "frame_count": int(result["frame_count"]),
         "duration_ms": int(result["duration_ms"]),
+        "source_duration_ms": int(result["source_duration_ms"]),
         "target_fps": int(result["target_fps"]),
         "source_fps": source_fps,
         "sample_fps": float(result["sample_fps"]),

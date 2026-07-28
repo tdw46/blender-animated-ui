@@ -16,7 +16,7 @@ used by Beyond VRM Extension Suite:
 - no filesystem access in the playback hot path;
 - only the visible gallery page advances;
 - only the N-panel UI regions that drew the gallery are redrawn;
-- a settings cog with thumbnail sizing, a 1–60 FPS ceiling, and opt-in
+- a settings cog with thumbnail sizing, an 8–60 FPS ceiling, and opt-in
   optimized playback;
 - viewport, timeline, and gallery-scroll pausing that matches the Beyond VRM
   behavior;
@@ -57,12 +57,17 @@ installed FFmpeg build. The file browser highlights common inputs:
 - multiple selected image files treated as an ordered sequence.
 
 Every input is normalized to at most 60 square RGBA PNG frames with transparent
-letterboxing. **Maximum Preview FPS** is a 1–60 FPS ceiling (10 FPS by
-default), not a forced conversion rate. New caches use the lowest of the
-setting, the detected native media rate, and the 60-frame duration budget.
+letterboxing. **Maximum Preview FPS** is an 8–60 FPS ceiling (10 FPS by
+default), not a forced conversion rate. Media that natively supports at least
+8 FPS never receives a slower cache merely because it is long. Instead, encoded
+media uses a shorter preview window when the 60-frame budget is reached. A
+genuinely slower source remains at its native rate, so a real 4 FPS animation is
+not padded with duplicates or sped up.
+
 Selected image sequences have no encoded native rate, so the setting defines
 their playback rate. Sequences longer than 60 images are sampled evenly from
-first to last rather than truncating the tail.
+first to last rather than truncating the tail; their bounded cache therefore
+acts as a full-sequence overview.
 
 ## Module map
 
@@ -273,17 +278,24 @@ previous cache only after success, and restores the prior cache if the final
 swap fails.
 
 `target_fps` is optional and defaults to 10. It is clamped to the supported
-1–60 FPS range by `frame_rate.clamp_preview_fps()`. For encoded animated media,
+8–60 FPS range by `frame_rate.clamp_preview_fps()`. For encoded animated media,
 `media_probe.parse_ffmpeg_probe()` detects the source rate. The FFmpeg sampling
 rate is:
 
 ```text
-min(target_fps, source_fps, MAX_SAMPLED_FRAMES / source_duration)
+source_cap = min(target_fps, source_fps)
+sample_fps = min(
+    source_cap,
+    max(8, MAX_SAMPLED_FRAMES / source_duration),
+)
 ```
 
-An unknown source rate is omitted from that minimum rather than guessed.
+An unknown source rate is omitted from `source_cap` rather than guessed.
 Consequently, requesting 60 FPS for a 12 FPS GIF/video produces an approximately
-12 FPS cache instead of five duplicated cache frames per source frame.
+12 FPS cache instead of five duplicated cache frames per source frame. A
+15-second, 24 FPS video capped at 60 cache frames uses an 8 FPS, 7.5-second
+preview window—not a stretched 4 FPS cache. If `source_fps` itself is below
+8 FPS, the outer minimum keeps that genuine native rate.
 
 ### Frame-rate integration contract
 
@@ -310,6 +322,20 @@ demo’s `preview_engine.preview_frame_rate()` reads and clamps the registered
 WindowManager value for both scheduler and panel-draw calls.
 `preview_cache.py` also applies a cache’s stored `source_fps` independently, so
 a high global ceiling cannot make a slower encoded source advance faster.
+`preview_cache.display_frame_rate()` exposes that same resolved per-item rate
+for UI labels:
+
+```python
+visible_fps = preview_cache.display_frame_rate(
+    item_id,
+    fps_limit=preview_fps,
+)
+```
+
+The demo uses this result beneath each thumbnail, so moving the settings slider
+immediately updates both live playback and the displayed FPS number. The number
+is the active display rate—`min(global ceiling, cache rate, native source
+rate)`—rather than immutable ingest metadata.
 
 ### Mixed playback frame rates
 
@@ -342,6 +368,8 @@ advanced or regenerated at the faster rate.
   "width": 512,
   "height": 512,
   "duration_ms": 1200,
+  "preview_duration_ms": 1200,
+  "source_duration_ms": 6000,
   "target_fps": 60.0,
   "source_fps": 12.0,
   "sample_fps": 12.0,
@@ -363,9 +391,12 @@ boundary on the configured playback sampling grid instead of assuming every
 timer tick means a new frame. `target_fps` is the user ceiling, `source_fps` is
 the detected encoded-media rate, `sample_fps` is the FFmpeg extraction rate,
 and `effective_fps` records the rate the completed cache actually represents.
+`duration_ms`/`preview_duration_ms` describe the cached playback loop, while
+`source_duration_ms` preserves the probed input duration so an integration can
+tell when a long source used a shortened preview window.
 
-All FPS metadata fields are additive in schema version 1. Older schema-v1
-caches without them continue to load.
+All FPS and source/preview-duration metadata fields are additive in schema
+version 1. Older schema-v1 caches without them continue to load.
 
 ## Playback performance contract
 
@@ -386,7 +417,8 @@ The settings-cog popover exposes:
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
   column wrapping;
 - **Maximum Preview FPS**, which immediately caps live thumbnail sampling and
-  is the ceiling used for future ingests; and
+  updates each card’s active FPS label, and is an 8–60 FPS ceiling used for
+  future ingests; and
 - **Optimized Playback Mode**, which pauses only for timeline playback,
   `(recent depsgraph activity AND real viewport drag/transform)`, or scrolling
   inside the owning preview UI region.
@@ -401,6 +433,10 @@ an existing cache was generated; ingest the source again to rebuild that cache
 at the new ceiling. Raising it above a source’s native FPS never upscales that
 source. The 60-frame cache ceiling always wins, so the nominal full-rate window
 is `60 / min(target_fps, source_fps)` seconds when a source rate is available.
+For sources that support it, the ingest floor makes that window no longer than
+7.5 seconds. Existing caches are not retimed because doing so would speed up or
+slow down their sampled motion; re-ingest an older sub-8 FPS cache to rebuild it
+under the new floor.
 
 ## Why normal Blender previews
 

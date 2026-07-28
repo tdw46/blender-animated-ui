@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import addon_utils
 import bpy
@@ -19,9 +20,17 @@ if "FINISHED" not in result:
     raise RuntimeError(f"Ingest operator returned {sorted(result)}")
 
 scene = bpy.context.scene
-if len(scene.animthumb_items) != 1:
-    raise RuntimeError(f"Expected one gallery item, found {len(scene.animthumb_items)}")
-item = scene.animthumb_items[0]
+resolved_sample_path = Path(sample_path).resolve()
+matching_items = tuple(
+    item
+    for item in scene.animthumb_items
+    if Path(str(item.source_path)).resolve() == resolved_sample_path
+)
+if len(matching_items) != 1:
+    raise RuntimeError(
+        f"Expected one cache for {resolved_sample_path}, found {len(matching_items)}"
+    )
+item = matching_items[0]
 if item.frame_count <= 1:
     raise RuntimeError(f"Expected an animated cache, found {item.frame_count} frame(s)")
 
@@ -40,9 +49,40 @@ if source_fps <= 0.0:
     raise RuntimeError("Ingest did not record the source frame rate")
 if effective_fps > source_fps * 1.15:
     raise RuntimeError("Ingest upsampled beyond the source frame rate")
+if source_fps >= 8.0 and effective_fps < 7.5:
+    raise RuntimeError("Ingest dropped supported media below the 8 FPS floor")
+source_duration_ms = int(metadata.get("source_duration_ms", 0))
+preview_duration_ms = int(metadata.get("preview_duration_ms", 0))
+if source_duration_ms <= 0 or preview_duration_ms <= 0:
+    raise RuntimeError("Ingest did not record source and preview durations")
 cached = preview_cache.load_item(item)
 if cached is None:
     raise RuntimeError("Preview cache did not load")
+native_display_fps = preview_cache.display_frame_rate(item.item_id, fps_limit=60)
+floor_display_fps = preview_cache.display_frame_rate(item.item_id, fps_limit=8)
+if abs(floor_display_fps - min(8.0, native_display_fps)) > 0.15:
+    raise RuntimeError("Live preview FPS did not react to the configured ceiling")
+high_rate_transitions = 0
+floor_rate_transitions = 0
+if native_display_fps > 8.5:
+    sample_window_ms = min(1000, max(2, int(item.duration_ms)))
+    high_indices = tuple(
+        preview_cache.frame_index(item.item_id, tick_ms, fps_limit=60)
+        for tick_ms in range(sample_window_ms)
+    )
+    floor_indices = tuple(
+        preview_cache.frame_index(item.item_id, tick_ms, fps_limit=8)
+        for tick_ms in range(sample_window_ms)
+    )
+    high_rate_transitions = sum(
+        current != previous for previous, current in zip(high_indices, high_indices[1:])
+    )
+    floor_rate_transitions = sum(
+        current != previous
+        for previous, current in zip(floor_indices, floor_indices[1:])
+    )
+    if floor_rate_transitions >= high_rate_transitions:
+        raise RuntimeError("Frame selection ignored the lower live FPS ceiling")
 now_ms = preview_engine.preview_clock_ms()
 icon_id = preview_cache.icon_id(item.item_id, now_ms, fps_limit=60)
 signature = preview_cache.frame_signature(
@@ -66,10 +106,16 @@ print(
         "operator": sorted(result),
         "frame_count": int(item.frame_count),
         "duration_ms": int(item.duration_ms),
+        "source_duration_ms": source_duration_ms,
+        "preview_duration_ms": preview_duration_ms,
         "target_fps": float(metadata["target_fps"]),
         "source_fps": source_fps,
         "sample_fps": float(metadata["sample_fps"]),
         "effective_fps": effective_fps,
+        "native_display_fps": native_display_fps,
+        "floor_display_fps": floor_display_fps,
+        "high_rate_transitions": high_rate_transitions,
+        "floor_rate_transitions": floor_rate_transitions,
         "icon_id": int(icon_id),
         "signature": signature,
         "next_interval_seconds": float(interval),

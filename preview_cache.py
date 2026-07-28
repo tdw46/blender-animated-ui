@@ -8,7 +8,12 @@ from pathlib import Path
 from bpy.utils import previews
 
 from .cache_format import FrameRecord, read_metadata
-from .frame_rate import sample_wait_ms, sampled_clock_ms
+from .frame_rate import (
+    active_display_fps,
+    effective_fps,
+    sample_wait_ms,
+    sampled_clock_ms,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +113,8 @@ def load_item(item, *, force: bool = False) -> CachedPreview | None:
         source_fps=max(0.0, float(metadata.get("source_fps", 0.0) or 0.0)),
         effective_fps=max(
             0.0,
-            float(metadata.get("effective_fps", 0.0) or 0.0),
+            float(metadata.get("effective_fps", 0.0) or 0.0)
+            or effective_fps(len(records), int(records[-1].end_ms)),
         ),
     )
     _ITEMS[item_id] = cached
@@ -129,6 +135,22 @@ def _item_fps_limit(
     if cached.source_fps > 0.0:
         limits.append(cached.source_fps)
     return min(limits) if limits else None
+
+
+def display_frame_rate(
+    item_id: str,
+    *,
+    fps_limit: int | float | None = None,
+) -> float:
+    """Return the rate this cache can visibly display under the live ceiling."""
+    cached = _ITEMS.get(str(item_id))
+    if cached is None or len(cached.records) <= 1:
+        return 0.0
+    return active_display_fps(
+        cached.effective_fps,
+        source_fps=cached.source_fps,
+        requested_fps=fps_limit,
+    )
 
 
 def frame_index(

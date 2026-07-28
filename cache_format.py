@@ -98,6 +98,7 @@ def write_metadata(
     target_fps: int | float | None = None,
     source_fps: int | float | None = None,
     sample_fps: int | float | None = None,
+    source_duration_ms: int | None = None,
 ) -> Path:
     resolved_records = tuple(records)
     duration_ms = max(1, int(resolved_records[-1].end_ms)) if resolved_records else 0
@@ -109,6 +110,7 @@ def write_metadata(
         "width": max(0, int(width)),
         "height": max(0, int(height)),
         "duration_ms": duration_ms,
+        "preview_duration_ms": duration_ms,
         "effective_fps": round(
             effective_fps(len(resolved_records), duration_ms),
             6,
@@ -129,6 +131,8 @@ def write_metadata(
         payload["source_fps"] = max(0.0, float(source_fps))
     if sample_fps is not None:
         payload["sample_fps"] = max(0.0, float(sample_fps))
+    if source_duration_ms is not None:
+        payload["source_duration_ms"] = max(0, int(source_duration_ms))
     metadata_path = cache_dir / "metadata.json"
     temporary_path = cache_dir / "metadata.json.tmp"
     temporary_path.write_text(

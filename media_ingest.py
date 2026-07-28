@@ -179,10 +179,7 @@ def ingest_media(
         if not raw_frames:
             raise RuntimeError("FFmpeg produced no thumbnail frames")
 
-        if duration_seconds > 0.0:
-            total_ms = max(1, int(round(duration_seconds * 1000.0)))
-            frame_duration_ms = max(1, int(round(total_ms / len(raw_frames))))
-        elif len(raw_frames) > 1:
+        if len(raw_frames) > 1:
             frame_duration_ms = frame_interval_ms(sample_fps)
         else:
             frame_duration_ms = DEFAULT_STATIC_FRAME_MS
@@ -207,6 +204,11 @@ def ingest_media(
             target_fps=resolved_target_fps,
             source_fps=source_fps,
             sample_fps=sample_fps,
+            source_duration_ms=(
+                max(1, int(round(duration_seconds * 1000.0)))
+                if duration_seconds > 0.0
+                else None
+            ),
         )
 
         final_dir = root / f"{safe_name}_{item_id}"
@@ -230,6 +232,11 @@ def ingest_media(
             "cache_dir": str(final_dir),
             "frame_count": len(records),
             "duration_ms": records[-1].end_ms,
+            "source_duration_ms": (
+                max(1, int(round(duration_seconds * 1000.0)))
+                if duration_seconds > 0.0
+                else 0
+            ),
             "width": width,
             "height": height,
             "target_fps": resolved_target_fps,

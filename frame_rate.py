@@ -21,8 +21,18 @@ def clamp_preview_fps(value: int | float | None) -> int:
 
 
 def frame_interval_ms(value: int | float | None) -> int:
-    """Return a whole-millisecond interval that never exceeds the rate."""
-    return max(1, int(math.ceil(1000.0 / clamp_preview_fps(value))))
+    """Return a whole-millisecond interval for any positive media rate.
+
+    This intentionally does not apply the configurable preview-rate floor.
+    Encoded media whose native rate is below that floor must retain its native
+    timing instead of being sped up.
+    """
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError):
+        resolved = float(DEFAULT_PREVIEW_FPS)
+    resolved = max(0.01, min(resolved, float(MAX_PREVIEW_FPS)))
+    return max(1, int(math.ceil(1000.0 / resolved)))
 
 
 def sampled_clock_ms(now_ms: int, fps_limit: int | float | None) -> int:
@@ -45,7 +55,12 @@ def target_sample_fps(
     *,
     source_fps: float = 0.0,
 ) -> float:
-    """Bound FFmpeg sampling by requested, source, and frame-budget rates."""
+    """Choose a bounded cache rate without creating sub-floor fast-media caches.
+
+    The frame budget may shorten the cached preview window, but it cannot drag
+    media that supports the configured floor below it. A genuinely slower
+    encoded source remains capped by its own native rate.
+    """
     requested = float(clamp_preview_fps(requested_fps))
     duration = max(0.0, float(duration_seconds))
     frame_budget = max(1, int(max_frames))
@@ -53,7 +68,8 @@ def target_sample_fps(
     rate = min(requested, native) if native > 0.0 else requested
     if duration <= 0.0:
         return rate
-    return max(0.01, min(rate, frame_budget / duration))
+    budget_rate = frame_budget / duration
+    return max(0.01, min(rate, max(float(MIN_PREVIEW_FPS), budget_rate)))
 
 
 def sample_wait_ms(
@@ -79,6 +95,25 @@ def effective_fps(frame_count: int, duration_ms: int) -> float:
     if frames <= 1 or duration <= 0:
         return 0.0
     return (frames * 1000.0) / duration
+
+
+def active_display_fps(
+    cache_fps: int | float,
+    *,
+    source_fps: int | float = 0.0,
+    requested_fps: int | float | None = None,
+) -> float:
+    """Resolve the truthful per-item rate shown by a live preview UI."""
+    limits = [
+        rate
+        for rate in (
+            max(0.0, float(cache_fps)),
+            max(0.0, float(source_fps)),
+            max(0.0, float(requested_fps)) if requested_fps is not None else 0.0,
+        )
+        if rate > 0.0
+    ]
+    return min(limits) if limits else 0.0
 
 
 def bounded_sample_indices(item_count: int, max_items: int) -> tuple[int, ...]:

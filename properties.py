@@ -18,6 +18,7 @@ def _update_gallery_settings(_owner, _context) -> None:
     from . import preview_engine, ui_gallery
 
     preview_engine.request_fast_reschedule()
+    preview_engine.tag_targeted_redraw()
     ui_gallery.tag_layout_refresh()
 
 
@@ -68,8 +69,8 @@ def register_properties() -> None:
     bpy.types.WindowManager.animthumb_preview_fps = IntProperty(
         name="Maximum Preview FPS",
         description=(
-            "Maximum live and ingest rate; each thumbnail remains capped by "
-            "its own source frame rate"
+            "Playback and ingest ceiling from 8 to 60 FPS; genuinely slower "
+            "media remains capped by its native frame rate"
         ),
         default=DEFAULT_PREVIEW_FPS,
         min=MIN_PREVIEW_FPS,

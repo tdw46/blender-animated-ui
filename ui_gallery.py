@@ -268,10 +268,13 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 action_row.scale_y = 0.82
                 action_row.alignment = "CENTER"
                 frame_count = int(item.frame_count)
-                effective_fps = float(item.effective_fps)
+                display_fps = preview_cache.display_frame_rate(
+                    str(item.item_id),
+                    fps_limit=preview_fps,
+                )
                 rate_text = (
-                    f"{effective_fps:.1f} FPS"
-                    if frame_count > 1 and effective_fps > 0.0
+                    f"{display_fps:.1f} FPS"
+                    if frame_count > 1 and display_fps > 0.0
                     else "Still"
                 )
                 action_row.label(

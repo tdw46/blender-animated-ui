@@ -10,11 +10,12 @@ import bpy
 MODULE = "bl_ext.user_default.blender_animated_ui"
 sample_path = os.environ.get("ANIMTHUMB_SAMPLE_MEDIA", "")
 second_sample_path = os.environ.get("ANIMTHUMB_SECOND_MEDIA", "")
+preview_fps_setting = int(os.environ.get("ANIMTHUMB_PREVIEW_FPS", "60"))
 if not sample_path:
     raise RuntimeError("ANIMTHUMB_SAMPLE_MEDIA is required")
 
 addon_utils.enable(MODULE, default_set=True)
-bpy.context.window_manager.animthumb_preview_fps = 60
+bpy.context.window_manager.animthumb_preview_fps = preview_fps_setting
 package = __import__(
     MODULE,
     fromlist=["ffmpeg_bridge", "library", "media_ingest", "preview_engine"],
@@ -69,8 +70,15 @@ def verify_and_quit() -> None:
     heartbeat = float(package.preview_engine._LAST_HEARTBEAT_MONOTONIC)
     preview_tick = int(bpy.context.window_manager.animthumb_preview_tick)
     preview_fps = package.preview_engine.preview_frame_rate()
-    fastest_source_fps = max(effective_rates, default=0.0)
-    maximum_expected_ticks = max(4, int(fastest_source_fps * 1.5) + 10)
+    display_rates = tuple(
+        package.preview_cache.display_frame_rate(
+            item_id,
+            fps_limit=preview_fps,
+        )
+        for item_id in item_ids
+    )
+    fastest_display_fps = max(display_rates, default=0.0)
+    maximum_expected_ticks = max(4, int(fastest_display_fps * 2.0) + 10)
     print(
         "ANIMTHUMB_MODAL_ENGINE",
         {
@@ -79,15 +87,16 @@ def verify_and_quit() -> None:
             "preview_tick": preview_tick,
             "preview_fps": preview_fps,
             "effective_rates": effective_rates,
+            "display_rates": display_rates,
             "maximum_expected_ticks": maximum_expected_ticks,
         },
     )
     if (
         not running
         or heartbeat <= 0.0
-        or preview_tick <= 0
+        or preview_tick < 3
         or preview_tick > maximum_expected_ticks
-        or preview_fps != 60
+        or preview_fps != preview_fps_setting
     ):
         raise RuntimeError("The real-window modal preview engine did not advance")
     package.preview_engine.stop()
@@ -98,4 +107,4 @@ def verify_and_quit() -> None:
     return None
 
 
-bpy.app.timers.register(verify_and_quit, first_interval=1.5)
+bpy.app.timers.register(verify_and_quit, first_interval=2.0)
