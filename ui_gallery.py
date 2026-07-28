@@ -12,6 +12,7 @@ from .constants import (
     GALLERY_ICON_SCALE,
     GALLERY_PAGE_SIZE,
 )
+from .gallery_query import GalleryQuery, filter_and_sort_media
 
 
 def _display_scale(context) -> float:
@@ -83,6 +84,37 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
+        layout.label(text="Library", icon="FILTER")
+        layout.prop(
+            wm,
+            "animthumb_gallery_search",
+            text="Search by Name",
+        )
+        layout.prop(
+            wm,
+            "animthumb_gallery_media_type",
+            text="Media Type",
+        )
+        layout.prop(
+            wm,
+            "animthumb_gallery_sort",
+            text="Sort",
+        )
+        filtered_count = len(
+            filter_and_sort_media(
+                context.scene.animthumb_items,
+                GalleryQuery(
+                    search_text=wm.animthumb_gallery_search,
+                    media_type=wm.animthumb_gallery_media_type,
+                    sort_mode=wm.animthumb_gallery_sort,
+                ),
+            )
+        )
+        layout.label(
+            text=f"Showing {filtered_count} of {len(context.scene.animthumb_items)}"
+        )
+        layout.separator()
+        layout.label(text="Display", icon="PREFERENCES")
         layout.prop(
             wm,
             "animthumb_thumbnail_scale",
@@ -164,10 +196,28 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 icon="ERROR" if status_level == "ERROR" else "INFO",
             )
 
-        items = list(scene.animthumb_items)
-        if not items:
+        all_items = list(scene.animthumb_items)
+        if not all_items:
             layout.label(
                 text="Add media to generate the first thumbnail cache.",
+                icon="INFO",
+            )
+            from . import preview_engine
+
+            preview_engine.register_ui_region(context, ())
+            return
+
+        items = filter_and_sort_media(
+            all_items,
+            GalleryQuery(
+                search_text=wm.animthumb_gallery_search,
+                media_type=wm.animthumb_gallery_media_type,
+                sort_mode=wm.animthumb_gallery_sort,
+            ),
+        )
+        if not items:
+            layout.label(
+                text="No thumbnails match the gallery filters.",
                 icon="INFO",
             )
             from . import preview_engine

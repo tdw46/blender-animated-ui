@@ -44,8 +44,13 @@ package = __import__(
 preview_cache = package.preview_cache
 preview_engine = package.preview_engine
 metadata = package.cache_format.read_metadata(item.cache_dir)
-if float(metadata.get("target_fps", 0.0)) != 60.0:
+if float(metadata.get("target_fps", 0.0)) != 22.0:
     raise RuntimeError("Ingest did not honor the configured preview frame rate")
+expected_source_type = resolved_sample_path.suffix[1:].upper()
+if str(metadata.get("source_type", "") or "") != expected_source_type:
+    raise RuntimeError("Ingest did not record the source media type")
+if not str(metadata.get("date_added_utc", "") or ""):
+    raise RuntimeError("Ingest did not record its date-added metadata")
 source_fps = float(metadata.get("source_fps", 0.0))
 effective_fps = float(metadata.get("effective_fps", 0.0))
 if source_fps <= 0.0:

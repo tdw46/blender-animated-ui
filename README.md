@@ -40,8 +40,9 @@ application.
 
 The file browser analyzes the active media and shows its native FPS, full
 duration, expected cache FPS, expected cache size, and optional trim range.
-New imports default to a 60 FPS ceiling but never exceed the media's own native
-rate. Use the arrow beneath any card to rebuild it with new settings, open its
+New imports default to a 22 FPS ceiling. Media whose native rate is below 22 FPS
+is sampled at that lower native rate instead of being upsampled. Use the arrow
+beneath any card to rebuild it with new settings, open its
 cache directory, or delete it.
 
 On the first ingest, the extension can install the platform-specific
@@ -89,6 +90,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
 | `media_selection.py` | Deterministic image-sequence ordering | None |
+| `gallery_query.py` | Source-type classification, name filtering, and date/name sorting | None |
 | `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
 | `cache_format.py` | Cache filenames, metadata schema, timing records | None |
@@ -121,6 +123,7 @@ your_extension/
 ├── frame_rate.py               # pure shared FPS policy
 ├── media_probe.py              # pure FFmpeg probe parser
 ├── media_selection.py          # pure image-sequence ordering
+├── gallery_query.py            # pure gallery filtering and sorting
 ├── media_settings.py           # pure import settings and estimates
 ├── media_types.py              # typed conversion profiles/results
 ├── paths.py
@@ -151,6 +154,7 @@ flowchart LR
     PE --> PC
     PE --> R["Targeted UI-region redraw"]
     PC --> FPS["frame_rate.py<br/>shared FPS policy"]
+    UI --> GQ["gallery_query.py<br/>filter and sort"]
 
     OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
     OP --> MS["media_settings.py<br/>shared analysis"]
@@ -170,8 +174,8 @@ Copy the smallest profile that matches the destination extension:
 
 | Profile | Required modules | Use when |
 | --- | --- | --- |
-| Playback only | `constants.py`, `frame_rate.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
-| Ingest only | `constants.py`, `frame_rate.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
+| Playback only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
+| Ingest only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
 | Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
 
 `media_ingest.py` is importable without `bpy`. Pass an explicit
@@ -189,6 +193,7 @@ cache_format.py
 constants.py
 ffmpeg_bridge.py
 frame_rate.py
+gallery_query.py
 media_probe.py
 media_selection.py
 media_settings.py
@@ -261,6 +266,9 @@ beginning with `_` are implementation details and may move between modules.
 | `media_ingest.probe_media(executable, source_path)` | Read native FPS, dimensions, duration, alpha, and frame count | FFmpeg executable; no Blender requirement |
 | `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
 | `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
+| `gallery_query.GalleryQuery` | Immutable search, media-type, and sort settings | None |
+| `gallery_query.source_media_type(source_paths, is_sequence=False)` | Classify imported media from its source extension | None |
+| `gallery_query.filter_and_sort_media(items, query)` | Compose name search, source-type filtering, and date/name sorting | None |
 | `media_settings.MediaImportSettings` | Immutable import, sequence-order, and trim settings | None |
 | `media_settings.MediaAnalysis` | Immutable probe information shared by UIs | None |
 | `media_settings.estimate_cache(analysis, settings)` | Estimate rate, duration, and output frame count | None |
@@ -349,7 +357,7 @@ result = ingest_media(
     ffmpeg,
     ["/path/to/animation.gif"],
     display_name="My Animation",
-    target_fps=60,
+    target_fps=22,
     trim_media=False,
 )
 print(result.cache_dir)
@@ -376,7 +384,7 @@ result = ingest_media(
         "/path/to/frame_0002.png",
         "/path/to/frame_0003.png",
     ],
-    target_fps=60,
+    target_fps=22,
     sequence_order="ALPHANUMERIC_ASC",
 )
 ```
@@ -386,7 +394,7 @@ previous cache only after success, and restores the prior cache if the final
 swap fails. It returns an immutable `IngestResult`. Existing dictionary-style
 callers remain compatible, but attribute access is the preferred API.
 
-`target_fps` is optional and defaults to 60. It is clamped to the supported
+`target_fps` is optional and defaults to 22. It is clamped to the supported
 8–60 FPS range by `frame_rate.clamp_preview_fps()`. For encoded animated media,
 `media_probe.parse_ffmpeg_probe()` detects the source rate. The import rate is:
 
@@ -396,10 +404,11 @@ sample_fps = min(target_fps, source_fps)  # when native FPS is known
 
 An unknown source rate leaves the requested ceiling unchanged rather than being
 guessed.
-Consequently, requesting 60 FPS for a 12 FPS GIF/video produces an approximately
-12 FPS cache instead of five duplicated cache frames per source frame. A
-15-second, 24 FPS video produces the full approximately 360-frame, 15-second
-cache. If `source_fps` itself is below 8 FPS, that genuine native rate is kept;
+Consequently, the default request for a 12 FPS GIF/video produces an
+approximately 12 FPS cache instead of duplicated cache frames. A 15-second,
+24 FPS video produces an approximately 330-frame, 15-second cache at the
+default 22 FPS ceiling, or the full 360 source frames if its ceiling is raised
+to 24. If `source_fps` itself is below 8 FPS, that genuine native rate is kept;
 the 8 FPS minimum applies to user-selectable ceilings, not to retiming slow
 source media.
 
@@ -466,7 +475,7 @@ successful standalone FFmpeg conversion is not sufficient compatibility proof.
 
 The demo deliberately keeps two settings separate:
 
-- each import/refresh operator owns a per-item `target_fps` ceiling, default 60;
+- each import/refresh operator owns a per-item `target_fps` ceiling, default 22;
 - `WindowManager.animthumb_preview_fps` is the current 8–60 FPS live gallery
   ceiling, default 10.
 
@@ -570,6 +579,8 @@ The per-card arrow menu contains:
   "width": 512,
   "height": 512,
   "media_kind": "MEDIA",
+  "source_type": "GIF",
+  "date_added_utc": "2026-07-28T12:00:00.000000Z",
   "cache_image_format": "WEBP",
   "trim_media": false,
   "trim_start_frame": 1,
@@ -602,9 +613,15 @@ and `effective_fps` records the rate the completed cache actually represents.
 `source_duration_ms` preserves the full probed input duration. They match within
 frame-rounding tolerance unless the user explicitly enabled Trim Media.
 
-FPS, source/preview duration, media kind, cache format, sequence order, and trim
-fields are additive in schema version 1. Older schema-v1 PNG caches without
-them continue to load.
+FPS, source/preview duration, source type, date added, media kind, cache format,
+sequence order, and trim fields are additive in schema version 1. Older
+schema-v1 PNG caches without them continue to load.
+
+`source_type` is the normalized source extension captured at import
+(`MP4`, `GIF`, `APNG`, and so on), or `SEQUENCE` for a selected image sequence.
+`date_added_utc` records the original import time and is preserved by per-item
+refreshes. Older caches derive their type from `source_paths` and use the
+metadata file modification time as their added-date fallback.
 
 ### Schema migration policy
 
@@ -643,6 +660,9 @@ visible-item load.
 
 The settings-cog popover exposes:
 
+- **Search by Name**, a case-insensitive title filter;
+- **Media Type**, using the source type stored during import;
+- **Sort**, with newest/oldest date-added and A–Z/Z–A name ordering;
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
   column wrapping and can be dragged up to 2.0×;
 - **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
@@ -665,6 +685,11 @@ keep that work bounded to the gallery that is actually on screen.
 Cache generation is intentionally outside this live-performance contract. Full
 source duration may produce many disk frames; the import UI warns above 1,200
 estimated frames without silently changing user settings.
+
+The default gallery sort is **Date Added (Newest)**, and a successful import
+returns the gallery to its first page. This makes newly added media the first
+visible item. Changing to a name or oldest-first sort deliberately follows the
+selected order instead.
 
 ## Why normal Blender previews
 

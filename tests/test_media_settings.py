@@ -24,6 +24,27 @@ from blender_animated_ui.media_types import (  # noqa: E402
 
 
 class MediaSettingsTests(unittest.TestCase):
+    def test_default_import_ceiling_is_22_fps(self) -> None:
+        self.assertEqual(MediaImportSettings().target_fps, 22)
+        higher_native = estimate_cache(
+            MediaAnalysis(
+                source_fps=30.0,
+                duration_seconds=1.0,
+                total_frames=30,
+            ),
+            MediaImportSettings(),
+        )
+        lower_native = estimate_cache(
+            MediaAnalysis(
+                source_fps=12.5,
+                duration_seconds=1.0,
+                total_frames=13,
+            ),
+            MediaImportSettings(),
+        )
+        self.assertEqual(higher_native.sample_fps, 22.0)
+        self.assertEqual(lower_native.sample_fps, 12.5)
+
     def test_settings_normalize_without_enabling_trim(self) -> None:
         settings = MediaImportSettings(
             target_fps=120,
@@ -100,6 +121,8 @@ class MediaSettingsTests(unittest.TestCase):
             source_fps=10.0,
             sample_fps=10.0,
             media_kind="MEDIA",
+            source_type="GIF",
+            date_added_utc="2026-07-28T12:00:00Z",
             sequence_order="",
             cache_image_format="JPEG",
             trim_media=False,

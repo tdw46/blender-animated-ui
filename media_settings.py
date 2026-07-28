@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .constants import MAX_PREVIEW_FPS
+from .constants import DEFAULT_IMPORT_FPS
 from .frame_rate import clamp_preview_fps, target_sample_fps
 from .media_selection import DEFAULT_SEQUENCE_ORDER
 
@@ -14,7 +14,7 @@ from .media_selection import DEFAULT_SEQUENCE_ORDER
 class MediaImportSettings:
     """User-controlled settings for one media-to-cache conversion."""
 
-    target_fps: int = MAX_PREVIEW_FPS
+    target_fps: int = DEFAULT_IMPORT_FPS
     sequence_order: str = DEFAULT_SEQUENCE_ORDER
     trim_media: bool = False
     trim_start_frame: int = 1

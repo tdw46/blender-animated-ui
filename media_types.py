@@ -44,6 +44,8 @@ class IngestResult(Mapping[str, object]):
     source_fps: float
     sample_fps: float
     media_kind: str
+    source_type: str
+    date_added_utc: str
     sequence_order: str
     cache_image_format: str
     trim_media: bool
@@ -64,6 +66,8 @@ class IngestResult(Mapping[str, object]):
         "source_fps",
         "sample_fps",
         "media_kind",
+        "source_type",
+        "date_added_utc",
         "sequence_order",
         "cache_image_format",
         "trim_media",

@@ -25,8 +25,8 @@ package.register()
 result_ids: list[str] = []
 try:
     operator_properties = bpy.ops.animthumb.ingest_media.get_rna_type().properties
-    if int(operator_properties["target_fps"].default) != 60:
-        raise RuntimeError("Source-package import FPS default is not 60")
+    if int(operator_properties["target_fps"].default) != 22:
+        raise RuntimeError("Source-package import FPS default is not 22")
     if bool(operator_properties["trim_media"].default):
         raise RuntimeError("Source-package Trim Media default is not disabled")
 

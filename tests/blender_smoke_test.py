@@ -21,6 +21,12 @@ if not hasattr(bpy.types.WindowManager, "animthumb_optimized_playback"):
     raise RuntimeError("Optimized playback setting did not register")
 if not hasattr(bpy.types.WindowManager, "animthumb_preview_fps"):
     raise RuntimeError("Preview frame-rate setting did not register")
+if not hasattr(bpy.types.WindowManager, "animthumb_gallery_search"):
+    raise RuntimeError("Gallery search setting did not register")
+if not hasattr(bpy.types.WindowManager, "animthumb_gallery_media_type"):
+    raise RuntimeError("Gallery media-type setting did not register")
+if not hasattr(bpy.types.WindowManager, "animthumb_gallery_sort"):
+    raise RuntimeError("Gallery sort setting did not register")
 if not hasattr(bpy.types, "ANIMTHUMB_OT_refresh_item"):
     raise RuntimeError("Per-thumbnail refresh operator did not register")
 if not hasattr(bpy.types, "ANIMTHUMB_OT_open_item_actions"):
@@ -39,8 +45,8 @@ if float(scale_property.soft_max) != 2.0:
     raise RuntimeError("Thumbnail scale slider does not reach 2.0")
 ingest_properties = bpy.ops.animthumb.ingest_media.get_rna_type().properties
 ingest_fps_property = ingest_properties["target_fps"]
-if int(ingest_fps_property.default) != 60:
-    raise RuntimeError("Per-media import FPS does not default to 60")
+if int(ingest_fps_property.default) != 22:
+    raise RuntimeError("Per-media import FPS does not default to 22")
 if bool(ingest_properties["trim_media"].default):
     raise RuntimeError("Trim Media must default to disabled")
 addon_entry = bpy.context.preferences.addons.get(MODULE)
@@ -65,6 +71,7 @@ print(
         "per_media_import_fps_default": int(ingest_fps_property.default),
         "trim_media_default": bool(ingest_properties["trim_media"].default),
         "custom_cache_preference": True,
+        "gallery_query": True,
         "preview_fps": int(bpy.context.window_manager.animthumb_preview_fps),
         "preview_fps_max": int(fps_property.hard_max),
     },

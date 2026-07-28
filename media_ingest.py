@@ -7,22 +7,25 @@ import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .cache_format import (
     FrameRecord,
     build_uniform_records,
     frame_filename,
+    read_metadata,
     safe_cache_name,
     stable_item_id,
     write_metadata,
 )
 from .constants import (
+    DEFAULT_IMPORT_FPS,
     DEFAULT_STATIC_FRAME_MS,
-    MAX_PREVIEW_FPS,
     MAX_THUMBNAIL_EDGE,
 )
 from .frame_rate import frame_interval_ms, target_sample_fps
+from .gallery_query import source_media_type
 from .media_probe import MediaProbe, parse_ffmpeg_probe
 from .media_selection import DEFAULT_SEQUENCE_ORDER
 from .media_settings import MediaImportSettings
@@ -207,6 +210,30 @@ def _resolve_cache_root(cache_directory: str | Path | None) -> Path:
     return root
 
 
+def _date_added_utc(root: Path, item_id: str) -> str:
+    """Preserve an existing item's original added date across atomic refreshes."""
+    for metadata_path in root.glob("*/metadata.json"):
+        try:
+            metadata = read_metadata(metadata_path.parent)
+        except (OSError, ValueError, KeyError):
+            continue
+        if str(metadata.get("item_id", "") or "") != item_id:
+            continue
+        existing = str(metadata.get("date_added_utc", "") or "").strip()
+        if existing:
+            return existing
+        try:
+            modified = metadata_path.stat().st_mtime
+        except OSError:
+            break
+        return (
+            datetime.fromtimestamp(modified, UTC)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z")
+        )
+    return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def _build_conversion_plan(
     executable: str,
     sources: tuple[Path, ...],
@@ -360,7 +387,7 @@ def ingest_media(
     source_paths: Iterable[str | Path],
     *,
     display_name: str = "",
-    target_fps: int = MAX_PREVIEW_FPS,
+    target_fps: int = DEFAULT_IMPORT_FPS,
     cache_item_id: str = "",
     sequence_order: str = DEFAULT_SEQUENCE_ORDER,
     trim_media: bool = False,
@@ -396,6 +423,8 @@ def ingest_media(
     )
     safe_name = safe_cache_name(name)
     root = _resolve_cache_root(cache_directory)
+    final_dir = root / f"{safe_name}_{item_id}"
+    date_added_utc = _date_added_utc(root, item_id)
     staging_dir = Path(tempfile.mkdtemp(prefix=f".{safe_name}_{item_id}_", dir=root))
     profile_resolver = image_profile_resolver or default_cache_image_profile
 
@@ -432,6 +461,8 @@ def ingest_media(
             sample_fps=plan.sample_fps,
             source_duration_ms=source_duration_ms or None,
             media_kind="SEQUENCE" if plan.is_sequence else "MEDIA",
+            source_type=source_media_type(sources, is_sequence=plan.is_sequence),
+            date_added_utc=date_added_utc,
             sequence_order=settings.sequence_order if plan.is_sequence else "",
             cache_image_format=plan.image_profile.metadata_format,
             trim_media=settings.trim_media,
@@ -439,7 +470,6 @@ def ingest_media(
             trim_end_frame=settings.trim_end_frame,
         )
 
-        final_dir = root / f"{safe_name}_{item_id}"
         _publish_cache(staging_dir, final_dir)
         duration_ms = records[-1].end_ms
         return IngestResult(
@@ -455,6 +485,8 @@ def ingest_media(
             source_fps=plan.source_fps,
             sample_fps=plan.sample_fps,
             media_kind="SEQUENCE" if plan.is_sequence else "MEDIA",
+            source_type=source_media_type(sources, is_sequence=plan.is_sequence),
+            date_added_utc=date_added_utc,
             sequence_order=settings.sequence_order if plan.is_sequence else "",
             cache_image_format=plan.image_profile.metadata_format,
             trim_media=settings.trim_media,

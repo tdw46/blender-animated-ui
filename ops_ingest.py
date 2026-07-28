@@ -16,7 +16,7 @@ from bpy.props import (
 from bpy.types import OperatorFileListElement
 
 from . import ffmpeg_bridge
-from .constants import MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
+from .constants import DEFAULT_IMPORT_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
 from .media_selection import (
     DEFAULT_SEQUENCE_ORDER,
     SEQUENCE_ORDER_ITEMS,
@@ -62,7 +62,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
             "Maximum cache sampling rate; encoded media remains capped by its "
             "native frame rate"
         ),
-        default=MAX_PREVIEW_FPS,
+        default=DEFAULT_IMPORT_FPS,
         min=MIN_PREVIEW_FPS,
         max=MAX_PREVIEW_FPS,
         soft_min=MIN_PREVIEW_FPS,
@@ -214,6 +214,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         from . import library
 
         library.refresh_all_scenes()
+        context.scene.animthumb_gallery_page = 0
         set_status(
             context,
             (
@@ -242,7 +243,7 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
             "Maximum cache sampling rate; encoded media remains capped by its "
             "native frame rate"
         ),
-        default=MAX_PREVIEW_FPS,
+        default=DEFAULT_IMPORT_FPS,
         min=MIN_PREVIEW_FPS,
         max=MAX_PREVIEW_FPS,
         soft_min=MIN_PREVIEW_FPS,
@@ -317,7 +318,7 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
                 float(
                     metadata.get("target_fps", 0.0)
                     or metadata.get("sample_fps", 0.0)
-                    or MAX_PREVIEW_FPS
+                    or DEFAULT_IMPORT_FPS
                 )
             )
         )

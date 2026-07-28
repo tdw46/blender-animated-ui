@@ -6,12 +6,18 @@ import bpy
 from bpy.props import (
     BoolProperty,
     CollectionProperty,
+    EnumProperty,
     FloatProperty,
     IntProperty,
     StringProperty,
 )
 
 from .constants import DEFAULT_PREVIEW_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
+from .gallery_query import (
+    DEFAULT_GALLERY_SORT,
+    GALLERY_SORT_ITEMS,
+    MEDIA_TYPE_FILTER_ITEMS,
+)
 
 
 def _update_gallery_settings(_owner, _context) -> None:
@@ -22,11 +28,21 @@ def _update_gallery_settings(_owner, _context) -> None:
     preview_engine.tag_targeted_layout_refresh()
 
 
+def _update_gallery_query(owner, context) -> None:
+    del owner
+    scene = getattr(context, "scene", None)
+    if scene is not None and hasattr(scene, "animthumb_gallery_page"):
+        scene.animthumb_gallery_page = 0
+    _update_gallery_settings(None, context)
+
+
 class ANIMTHUMB_PG_ThumbnailItem(bpy.types.PropertyGroup):
     item_id: StringProperty(name="Item ID", options={"HIDDEN"})
     name: StringProperty(name="Name")
     cache_dir: StringProperty(name="Cache Directory", subtype="DIR_PATH")
     source_path: StringProperty(name="Source", subtype="FILE_PATH")
+    source_type: StringProperty(name="Source Type", default="OTHER")
+    date_added_utc: StringProperty(name="Date Added", default="")
     frame_count: IntProperty(name="Frame Count", default=0, min=0)
     duration_ms: IntProperty(name="Duration (ms)", default=0, min=0)
     source_fps: FloatProperty(name="Source FPS", default=0.0, min=0.0, precision=3)
@@ -53,6 +69,26 @@ def register_properties() -> None:
         name="Animated Preview Tick",
         default=0,
         options={"HIDDEN"},
+    )
+    bpy.types.WindowManager.animthumb_gallery_search = StringProperty(
+        name="Search",
+        description="Filter animated thumbnails by name",
+        default="",
+        update=_update_gallery_query,
+    )
+    bpy.types.WindowManager.animthumb_gallery_media_type = EnumProperty(
+        name="Media Type",
+        description="Show only imported media of this source type",
+        items=MEDIA_TYPE_FILTER_ITEMS,
+        default="ALL",
+        update=_update_gallery_query,
+    )
+    bpy.types.WindowManager.animthumb_gallery_sort = EnumProperty(
+        name="Sort",
+        description="Choose the animated thumbnail gallery order",
+        items=GALLERY_SORT_ITEMS,
+        default=DEFAULT_GALLERY_SORT,
+        update=_update_gallery_query,
     )
     bpy.types.WindowManager.animthumb_thumbnail_scale = FloatProperty(
         name="Thumbnail Scale",
@@ -104,6 +140,9 @@ def unregister_properties() -> None:
     property_names = (
         (bpy.types.WindowManager, "animthumb_status_level"),
         (bpy.types.WindowManager, "animthumb_status"),
+        (bpy.types.WindowManager, "animthumb_gallery_sort"),
+        (bpy.types.WindowManager, "animthumb_gallery_media_type"),
+        (bpy.types.WindowManager, "animthumb_gallery_search"),
         (bpy.types.WindowManager, "animthumb_optimized_playback"),
         (bpy.types.WindowManager, "animthumb_preview_fps"),
         (bpy.types.WindowManager, "animthumb_thumbnail_scale"),

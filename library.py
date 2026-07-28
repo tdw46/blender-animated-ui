@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import bpy
@@ -10,6 +11,7 @@ import bpy
 from .cache_format import read_metadata
 from .constants import GALLERY_PAGE_SIZE
 from .frame_rate import effective_fps
+from .gallery_query import source_media_type
 from .paths import cache_root
 
 _STARTUP_REFRESH_SCHEDULED = False
@@ -21,6 +23,8 @@ def _populate_item(item, cache_dir: Path, metadata: dict) -> None:
     item.cache_dir = str(cache_dir)
     source_paths = metadata.get("source_paths") or []
     item.source_path = str(source_paths[0]) if source_paths else ""
+    item.source_type = str(metadata.get("source_type", "OTHER") or "OTHER").upper()
+    item.date_added_utc = str(metadata.get("date_added_utc", "") or "")
     records = metadata.get("records") or ()
     item.frame_count = len(records)
     item.duration_ms = max(0, int(metadata.get("duration_ms", 0) or 0))
@@ -43,8 +47,30 @@ def discover_caches() -> tuple[tuple[Path, dict], ...]:
             metadata = read_metadata(metadata_path.parent)
         except (OSError, ValueError, KeyError):
             continue
+        source_paths = metadata.get("source_paths") or ()
+        metadata["source_type"] = str(
+            metadata.get("source_type", "")
+            or source_media_type(
+                source_paths,
+                is_sequence=str(metadata.get("media_kind", "")).upper() == "SEQUENCE",
+            )
+        ).upper()
+        if not str(metadata.get("date_added_utc", "") or ""):
+            try:
+                modified = metadata_path.stat().st_mtime
+            except OSError:
+                modified = 0.0
+            metadata["date_added_utc"] = (
+                datetime.fromtimestamp(modified, UTC)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z")
+            )
         discovered.append((metadata_path.parent, metadata))
     discovered.sort(key=lambda entry: str(entry[1].get("name", "")).casefold())
+    discovered.sort(
+        key=lambda entry: str(entry[1].get("date_added_utc", "") or ""),
+        reverse=True,
+    )
     return tuple(discovered)
 
 

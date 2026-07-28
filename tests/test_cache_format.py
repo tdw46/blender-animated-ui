@@ -66,6 +66,8 @@ class CacheFormatTests(unittest.TestCase):
                 sample_fps=12,
                 source_duration_ms=1250,
                 media_kind="MEDIA",
+                source_type="GIF",
+                date_added_utc="2026-07-28T12:00:00Z",
             )
             metadata = read_metadata(cache_dir)
             self.assertEqual(metadata["item_id"], "test")
@@ -73,6 +75,11 @@ class CacheFormatTests(unittest.TestCase):
             self.assertEqual(metadata["preview_duration_ms"], 300)
             self.assertEqual(metadata["source_duration_ms"], 1250)
             self.assertEqual(metadata["media_kind"], "MEDIA")
+            self.assertEqual(metadata["source_type"], "GIF")
+            self.assertEqual(
+                metadata["date_added_utc"],
+                "2026-07-28T12:00:00Z",
+            )
             self.assertEqual(metadata["cache_image_format"], "PNG")
             self.assertFalse(metadata["trim_media"])
             self.assertEqual(metadata["target_fps"], 12.0)
