@@ -1,5 +1,7 @@
 # Animated Thumbnail Preview Demo
 
+![Animated thumbnail previews running in the Blender N-panel gallery](<resources/Blender Animated Thumbnails 1.webp>)
+
 A reusable example library for adding efficient animated preview thumbnails to
 Blender extensions.
 
@@ -48,6 +50,8 @@ New imports default to a 22 FPS ceiling. Media whose native rate is below 22 FPS
 is sampled at that lower native rate instead of being upsampled. Use the arrow
 beneath any card to rebuild it with new settings and an editable imported name,
 rename it without rebuilding, open its cache directory, or delete it.
+
+![Importing animated media, opening its item actions, and renaming the thumbnail](<resources/Blender Animated Thumbnails 3.webp>)
 
 On the first ingest, the extension can install the platform-specific
 `imageio-ffmpeg` 0.6.0 wheel into persistent extension-user storage. The wheel
@@ -743,6 +747,8 @@ The settings-cog popover exposes:
   inside the owning preview UI region; and
 - **Reset Settings**, which restores search, media-type filter, sort, thumbnail
   size, live FPS, optimized playback, and the first gallery page.
+
+![Filtering, sorting, rescaling, and limiting live playback FPS from the gallery settings cog](<resources/Blender Animated Thumbnails 2.webp>)
 
 Plain mouse movement, background depsgraph chatter, clicks elsewhere, and
 scrolling outside the gallery do not renew a pause.
