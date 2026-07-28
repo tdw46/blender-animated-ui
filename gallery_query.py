@@ -6,7 +6,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_GALLERY_SORT = "DATE_ADDED_DESC"
+from .gallery_settings import (
+    DEFAULT_GALLERY_MEDIA_TYPE,
+    DEFAULT_GALLERY_SEARCH,
+    DEFAULT_GALLERY_SORT,
+)
 
 MEDIA_TYPE_FILTER_ITEMS = (
     ("ALL", "All Media Types", "Show every imported media type"),
@@ -59,8 +63,8 @@ _KNOWN_MEDIA_TYPES = frozenset(
 class GalleryQuery:
     """The reusable, Blender-independent state of one gallery query."""
 
-    search_text: str = ""
-    media_type: str = "ALL"
+    search_text: str = DEFAULT_GALLERY_SEARCH
+    media_type: str = DEFAULT_GALLERY_MEDIA_TYPE
     sort_mode: str = DEFAULT_GALLERY_SORT
 
 

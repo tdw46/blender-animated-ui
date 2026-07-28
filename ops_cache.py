@@ -10,7 +10,7 @@ from pathlib import Path
 import bpy
 from bpy.props import StringProperty
 
-from .utils import find_scene_item, set_status
+from .utils import find_scene_item, invoke_props_dialog_compat, set_status
 
 
 class ANIMTHUMB_OT_RefreshLibrary(bpy.types.Operator):
@@ -30,7 +30,9 @@ class ANIMTHUMB_OT_RefreshLibrary(bpy.types.Operator):
 class ANIMTHUMB_OT_OpenItemActions(bpy.types.Operator):
     bl_idname = "animthumb.open_item_actions"
     bl_label = "Animated Thumbnail Actions"
-    bl_description = "Show refresh, cache-folder, and delete actions for this thumbnail"
+    bl_description = (
+        "Show refresh, rename, cache-folder, and delete actions for this thumbnail"
+    )
     bl_options = {"REGISTER"}
 
     item_id: StringProperty(options={"HIDDEN"})
@@ -51,6 +53,14 @@ class ANIMTHUMB_OT_OpenItemActions(bpy.types.Operator):
                 icon="FILE_REFRESH",
             )
             refresh.item_id = item_id
+            rename_row = menu.layout.row()
+            rename_row.operator_context = "INVOKE_DEFAULT"
+            rename = rename_row.operator(
+                "animthumb.rename_item",
+                text="Rename Thumbnail",
+                icon="GREASEPENCIL",
+            )
+            rename.item_id = item_id
             open_directory = menu.layout.operator(
                 "animthumb.open_cache_directory",
                 text="Open Thumbnail Cache Directory",
@@ -72,6 +82,56 @@ class ANIMTHUMB_OT_OpenItemActions(bpy.types.Operator):
             title=str(item.name or "Animated Thumbnail"),
             icon="IMAGE_DATA",
         )
+        return {"FINISHED"}
+
+
+class ANIMTHUMB_OT_RenameItem(bpy.types.Operator):
+    bl_idname = "animthumb.rename_item"
+    bl_label = "Rename Animated Thumbnail"
+    bl_description = "Change the imported display name without rebuilding the cache"
+    bl_options = {"REGISTER"}
+
+    item_id: StringProperty(options={"HIDDEN"})
+    new_name: StringProperty(
+        name="Imported Name",
+        description="Name shown for this media in the animated gallery",
+    )
+
+    def invoke(self, context, event):
+        del event
+        item = find_scene_item(context.scene, self.item_id)
+        if item is None:
+            self.report({"ERROR"}, "Animated thumbnail cache was not found")
+            return {"CANCELLED"}
+        self.new_name = str(item.name or "")
+        return invoke_props_dialog_compat(
+            context,
+            self,
+            width=360,
+            title="Rename Animated Thumbnail",
+            confirm_text="Rename Thumbnail",
+        )
+
+    def draw(self, _context):
+        self.layout.prop(self, "new_name", text="Imported Name")
+
+    def execute(self, context):
+        resolved_name = str(self.new_name or "").strip()
+        if not resolved_name:
+            self.report({"ERROR"}, "Imported name cannot be empty")
+            return {"CANCELLED"}
+        from . import library
+
+        try:
+            renamed = library.rename_item(self.item_id, resolved_name)
+        except (OSError, ValueError) as error:
+            self.report({"ERROR"}, f"Could not rename thumbnail: {error}")
+            return {"CANCELLED"}
+        if not renamed:
+            self.report({"ERROR"}, "Animated thumbnail cache was not found")
+            return {"CANCELLED"}
+        set_status(context, f"Renamed animated thumbnail to {resolved_name}")
+        self.report({"INFO"}, f"Renamed animated thumbnail to {resolved_name}")
         return {"FINISHED"}
 
 

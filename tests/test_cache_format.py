@@ -18,6 +18,7 @@ from blender_animated_ui.cache_format import (  # noqa: E402
     parse_frame_filename,
     read_metadata,
     stable_item_id,
+    update_metadata_name,
     write_metadata,
 )
 
@@ -87,6 +88,10 @@ class CacheFormatTests(unittest.TestCase):
             self.assertEqual(metadata["sample_fps"], 12.0)
             self.assertEqual(metadata["effective_fps"], 10.0)
             self.assertEqual(len(metadata["records"]), 3)
+            self.assertEqual(update_metadata_name(cache_dir, "Renamed"), "Renamed")
+            renamed_metadata = read_metadata(cache_dir)
+            self.assertEqual(renamed_metadata["name"], "Renamed")
+            self.assertEqual(len(renamed_metadata["records"]), 3)
 
     def test_item_id_is_stable(self) -> None:
         first = stable_item_id(["/tmp/a.gif", "/tmp/b.gif"])

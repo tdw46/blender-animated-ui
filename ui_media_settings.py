@@ -83,6 +83,8 @@ def draw_media_settings(layout, context, operator, paths: tuple[Path, ...]) -> N
     analysis = analysis_from_operator(operator, paths)
     estimate = estimate_cache(analysis, settings)
     settings_box = layout.box()
+    settings_box.prop(operator, "display_name", text="Imported Name")
+    settings_box.separator(factor=0.5)
 
     if analysis.is_sequence:
         settings_box.label(

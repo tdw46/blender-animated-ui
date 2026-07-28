@@ -56,6 +56,10 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
     filepath: StringProperty(subtype="FILE_PATH")
     directory: StringProperty(subtype="DIR_PATH")
     files: CollectionProperty(type=OperatorFileListElement)
+    display_name: StringProperty(
+        name="Imported Name",
+        description="Name shown for this media in the animated gallery",
+    )
     target_fps: IntProperty(
         name="Import FPS Ceiling",
         description=(
@@ -110,6 +114,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         min=0,
     )
     analysis_is_sequence: BoolProperty(options={"HIDDEN", "SKIP_SAVE"})
+    analysis_default_name: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
     filter_glob: StringProperty(default=_MEDIA_FILTER_GLOB, options={"HIDDEN"})
 
     def invoke(self, context, event):
@@ -124,6 +129,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         if signature == self.analysis_signature:
             return
         self.analysis_signature = signature
+        previous_default_name = self.analysis_default_name
         self.analysis_selection_count = len(paths)
         self.analysis_is_sequence = len(paths) > 1
         self.analysis_source_fps = 0.0
@@ -131,8 +137,17 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
         self.analysis_total_frames = 0
         self.analysis_message = ""
         if not paths:
+            if self.display_name == previous_default_name:
+                self.display_name = ""
+            self.analysis_default_name = ""
             self.analysis_message = "Select a file to analyze"
             return
+        suggested_name = paths[0].parent.name if len(paths) > 1 else paths[0].stem
+        if not str(self.display_name or "").strip() or (
+            self.display_name == previous_default_name
+        ):
+            self.display_name = suggested_name
+        self.analysis_default_name = suggested_name
         if len(paths) > 1:
             self.analysis_total_frames = len(paths)
             self.trim_start_frame = 1
@@ -200,6 +215,7 @@ class ANIMTHUMB_OT_IngestMedia(bpy.types.Operator):
             result = ingest_media(
                 str(dependency_status.get("executable", "") or ""),
                 selected,
+                display_name=self.display_name,
                 target_fps=int(self.target_fps),
                 sequence_order=self.sequence_order,
                 trim_media=bool(self.trim_media),
@@ -236,7 +252,10 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
 
     item_id: StringProperty(options={"HIDDEN"})
     source_path: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
-    item_name: StringProperty(options={"HIDDEN", "SKIP_SAVE"})
+    display_name: StringProperty(
+        name="Imported Name",
+        description="Name shown for this media in the animated gallery",
+    )
     target_fps: IntProperty(
         name="Import FPS Ceiling",
         description=(
@@ -312,7 +331,7 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
             self.report({"ERROR"}, "Original media paths are unavailable")
             return {"CANCELLED"}
         self.source_path = str(source_paths[0])
-        self.item_name = str(metadata.get("name", "") or item.name)
+        self.display_name = str(metadata.get("name", "") or item.name)
         self.target_fps = int(
             round(
                 float(
@@ -363,7 +382,7 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
             context,
             self,
             width=440,
-            title=f"Refresh {self.item_name}",
+            title=f"Refresh {self.display_name}",
             confirm_text="Rebuild Preview",
         )
 
@@ -403,7 +422,9 @@ class ANIMTHUMB_OT_RefreshItem(bpy.types.Operator):
             result = ingest_media(
                 str(dependency_status.get("executable", "") or ""),
                 source_paths,
-                display_name=str(metadata.get("name", "") or item.name),
+                display_name=str(
+                    self.display_name or metadata.get("name", "") or item.name
+                ),
                 target_fps=int(self.target_fps),
                 cache_item_id=self.item_id,
                 sequence_order=self.sequence_order,

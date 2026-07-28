@@ -171,6 +171,27 @@ def write_metadata(
     return metadata_path
 
 
+def update_metadata_name(cache_dir: str | Path, name: str) -> str:
+    """Atomically update only the reader-facing name of an existing cache."""
+    resolved_name = str(name or "").strip()
+    if not resolved_name:
+        raise ValueError("Imported name cannot be empty")
+    metadata_path = Path(cache_dir) / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if int(payload.get("schema_version", -1)) != CACHE_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported thumbnail cache schema: {payload.get('schema_version')!r}"
+        )
+    temporary_path = metadata_path.with_suffix(".json.tmp")
+    payload["name"] = resolved_name
+    temporary_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary_path.replace(metadata_path)
+    return resolved_name
+
+
 def read_metadata(cache_dir: str | Path) -> dict:
     resolved_dir = Path(cache_dir)
     payload = json.loads((resolved_dir / "metadata.json").read_text(encoding="utf-8"))

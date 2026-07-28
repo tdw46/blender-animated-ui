@@ -13,6 +13,10 @@ from .constants import (
     GALLERY_PAGE_SIZE,
 )
 from .gallery_query import GalleryQuery, filter_and_sort_media
+from .gallery_settings import (
+    DEFAULT_GALLERY_SETTINGS,
+    normalized_thumbnail_scale,
+)
 
 
 def _display_scale(context) -> float:
@@ -34,13 +38,13 @@ def _display_scale(context) -> float:
 
 def gallery_layout_metrics(context, region_width: int) -> dict[str, float | int]:
     display_scale = _display_scale(context)
-    try:
-        thumbnail_scale = float(
-            getattr(context.window_manager, "animthumb_thumbnail_scale", 1.0) or 1.0
+    thumbnail_scale = normalized_thumbnail_scale(
+        getattr(
+            context.window_manager,
+            "animthumb_thumbnail_scale",
+            DEFAULT_GALLERY_SETTINGS.thumbnail_scale,
         )
-    except (TypeError, ValueError):
-        thumbnail_scale = 1.0
-    thumbnail_scale = max(0.5, min(thumbnail_scale, 4.0))
+    )
     target_tile_width = GALLERY_BASE_TILE_WIDTH_PX * display_scale * thumbnail_scale
     columns = max(1, int(max(1.0, float(region_width)) // target_tile_width))
     return {
@@ -132,6 +136,11 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
         )
         library_box.label(
             text=f"Showing {filtered_count} of {len(context.scene.animthumb_items)}"
+        )
+        layout.operator(
+            "animthumb.reset_gallery_settings",
+            text="Reset Settings",
+            icon="LOOP_BACK",
         )
 
 

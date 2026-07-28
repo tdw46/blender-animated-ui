@@ -8,7 +8,7 @@ from pathlib import Path
 
 import bpy
 
-from .cache_format import read_metadata
+from .cache_format import read_metadata, update_metadata_name
 from .constants import GALLERY_PAGE_SIZE
 from .frame_rate import effective_fps
 from .gallery_query import source_media_type
@@ -113,6 +113,20 @@ def remove_item(item_id: str) -> bool:
 
     preview_cache.unload_item(item_id)
     shutil.rmtree(target_dir)
+    refresh_all_scenes()
+    return True
+
+
+def rename_item(item_id: str, name: str) -> bool:
+    """Rename one cache in metadata without moving or rebuilding its files."""
+    target_dir: Path | None = None
+    for cache_dir, metadata in discover_caches():
+        if str(metadata.get("item_id", "") or "") == str(item_id):
+            target_dir = cache_dir
+            break
+    if target_dir is None:
+        return False
+    update_metadata_name(target_dir, name)
     refresh_all_scenes()
     return True
 

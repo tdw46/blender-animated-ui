@@ -39,11 +39,12 @@ application.
    sequence.
 
 The file browser analyzes the active media and shows its native FPS, full
-duration, expected cache FPS, expected cache size, and optional trim range.
+duration, expected cache FPS, expected cache size, editable **Imported Name**,
+and optional trim range.
 New imports default to a 22 FPS ceiling. Media whose native rate is below 22 FPS
 is sampled at that lower native rate instead of being upsampled. Use the arrow
-beneath any card to rebuild it with new settings, open its
-cache directory, or delete it.
+beneath any card to rebuild it with new settings and an editable imported name,
+rename it without rebuilding, open its cache directory, or delete it.
 
 On the first ingest, the extension can install the platform-specific
 `imageio-ffmpeg` 0.6.0 wheel into persistent extension-user storage. The wheel
@@ -90,6 +91,7 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `frame_rate.py` | Shared FPS clamping, sampling, and playback-grid math | None |
 | `media_probe.py` | Parse native FPS, dimensions, and duration from FFmpeg | None |
 | `media_selection.py` | Deterministic image-sequence ordering | None |
+| `gallery_settings.py` | Shared cog defaults and normalized thumbnail-scale math | None |
 | `gallery_query.py` | Source-type classification, name filtering, and date/name sorting | None |
 | `media_settings.py` | Typed import settings, probe analysis, and cache estimates | None |
 | `media_types.py` | Typed cache-image profiles and ingest results | None |
@@ -104,8 +106,8 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `library.py` | Scan persistent caches into Scene collections | Blender RNA |
 | `ops_dependency.py` | FFmpeg install and readiness operator | Blender operators |
 | `ops_ingest.py` | File selector, probe analysis, ingest, and item refresh | Blender operators |
-| `ops_cache.py` | Library refresh, item menu, cache folder, and deletion | Blender operators |
-| `ops_gallery.py` | Gallery pagination | Blender operators |
+| `ops_cache.py` | Library refresh, item menu, rename, cache folder, and deletion | Blender operators |
+| `ops_gallery.py` | Gallery pagination and settings reset | Blender operators |
 | `ui_media_settings.py` | Shared file-picker and refresh-dialog presentation | Blender UI |
 | `ui_gallery.py` | N-panel grid and settings-cog popover | Blender UI |
 | `utils.py` | Small Blender-facing operator helpers | Blender runtime |
@@ -123,6 +125,7 @@ your_extension/
 ├── frame_rate.py               # pure shared FPS policy
 ├── media_probe.py              # pure FFmpeg probe parser
 ├── media_selection.py          # pure image-sequence ordering
+├── gallery_settings.py         # pure gallery defaults and scale math
 ├── gallery_query.py            # pure gallery filtering and sorting
 ├── media_settings.py           # pure import settings and estimates
 ├── media_types.py              # typed conversion profiles/results
@@ -154,6 +157,7 @@ flowchart LR
     PE --> PC
     PE --> R["Targeted UI-region redraw"]
     PC --> FPS["frame_rate.py<br/>shared FPS policy"]
+    UI --> GS["gallery_settings.py<br/>defaults and scale normalization"]
     UI --> GQ["gallery_query.py<br/>filter and sort"]
 
     OP["ops_ingest.py<br/>file selector"] --> FB["ffmpeg_bridge.py<br/>platform wheel"]
@@ -174,8 +178,8 @@ Copy the smallest profile that matches the destination extension:
 
 | Profile | Required modules | Use when |
 | --- | --- | --- |
-| Playback only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
-| Ingest only | `constants.py`, `frame_rate.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
+| Playback only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `cache_format.py`, `paths.py`, `library.py`, `preview_cache.py`, `preview_engine.py`, `properties.py` | Another system already creates compatible timed caches and owns its gallery panel |
+| Ingest only | `constants.py`, `frame_rate.py`, `gallery_settings.py`, `gallery_query.py`, `media_probe.py`, `media_selection.py`, `media_settings.py`, `media_types.py`, `cache_format.py`, `media_ingest.py` | A project needs conversion but owns its dependency and UI layers |
 | Complete demo | All modules below | A project wants wheel installation, persistent library, N-panel gallery, preferences, and item actions |
 
 `media_ingest.py` is importable without `bpy`. Pass an explicit
@@ -193,6 +197,7 @@ cache_format.py
 constants.py
 ffmpeg_bridge.py
 frame_rate.py
+gallery_settings.py
 gallery_query.py
 media_probe.py
 media_selection.py
@@ -266,6 +271,8 @@ beginning with `_` are implementation details and may move between modules.
 | `media_ingest.probe_media(executable, source_path)` | Read native FPS, dimensions, duration, alpha, and frame count | FFmpeg executable; no Blender requirement |
 | `media_ingest.ingest_media(executable, source_paths, **settings)` | Build or atomically replace one cache | FFmpeg; Blender only when `cache_directory` is omitted |
 | `media_ingest.default_cache_image_profile(has_alpha)` | Return the demo JPEG/WebP conversion profile | None |
+| `gallery_settings.DEFAULT_GALLERY_SETTINGS` | Shared search, filter, sort, size, FPS, and optimized-mode defaults | None |
+| `gallery_settings.normalized_thumbnail_scale(value)` | Map the 1.0 UI baseline onto the original 1.5 visual size | None |
 | `gallery_query.GalleryQuery` | Immutable search, media-type, and sort settings | None |
 | `gallery_query.source_media_type(source_paths, is_sequence=False)` | Classify imported media from its source extension | None |
 | `gallery_query.filter_and_sort_media(items, query)` | Compose name search, source-type filtering, and date/name sorting | None |
@@ -275,6 +282,7 @@ beginning with `_` are implementation details and may move between modules.
 | `media_types.CacheImageProfile` | Define a custom Blender-readable cache image profile | None |
 | `media_types.IngestResult` | Typed immutable conversion result | None |
 | `cache_format.read_metadata(cache_dir)` | Validate schema and timed frame files | None |
+| `cache_format.update_metadata_name(cache_dir, name)` | Atomically rename a cache without rebuilding frames | None |
 | `preview_cache.load_item(item, force=False)` | Load one cache into the shared preview collection | Blender main thread |
 | `preview_cache.icon_id(item_id, now_ms, fps_limit=None)` | Resolve the current in-memory preview icon | Blender main thread |
 | `preview_cache.next_interval_seconds(item_ids, now_ms, fps_limit=None)` | Find the earliest real boundary for visible items | Blender main thread |
@@ -561,7 +569,9 @@ separate, explicit operation.
 The per-card arrow menu contains:
 
 - **Refresh with New FPS Settings**, which atomically rebuilds the same cache
-  identity;
+  identity and exposes the current **Imported Name**;
+- **Rename Thumbnail**, which atomically changes only the name in cache metadata
+  without moving the cache directory or rebuilding frames;
 - **Open Thumbnail Cache Directory**, which uses Blender's path-open operator
   with a capability-gated OS fallback; and
 - **Delete Thumbnail**, which removes only that generated item directory.
@@ -664,12 +674,16 @@ The settings-cog popover exposes:
 - **Media Type**, using the source type stored during import;
 - **Sort**, with newest/oldest date-added and A–Z/Z–A name ordering;
 - **Thumbnail Scale**, which drives both the visual icon scale and DPI-aware
-  column wrapping and can be dragged up to 4.0×;
+  column wrapping. It defaults to 1.0, which renders at the original 1.5 visual
+  size. The new 0.5 minimum preserves the original 0.75 visual size, and the
+  slider reaches 4.0;
 - **Live Playback FPS Ceiling**, which immediately caps live thumbnail sampling
-  and updates each card’s active FPS label from 8 through 60 FPS; and
+  and updates each card’s active FPS label from 8 through 60 FPS;
 - **Optimized Playback Mode**, which pauses only for timeline playback,
   `(recent depsgraph activity AND real viewport drag/transform)`, or scrolling
-  inside the owning preview UI region.
+  inside the owning preview UI region; and
+- **Reset Settings**, which restores search, media-type filter, sort, thumbnail
+  size, live FPS, optimized playback, and the first gallery page.
 
 Plain mouse movement, background depsgraph chatter, clicks elsewhere, and
 scrolling outside the gallery do not renew a pause.

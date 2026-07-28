@@ -234,6 +234,18 @@ def _date_added_utc(root: Path, item_id: str) -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _existing_cache_directory(root: Path, item_id: str) -> Path | None:
+    """Resolve an existing cache so display-name edits preserve its directory."""
+    for metadata_path in root.glob("*/metadata.json"):
+        try:
+            metadata = read_metadata(metadata_path.parent)
+        except (OSError, ValueError, KeyError):
+            continue
+        if str(metadata.get("item_id", "") or "") == item_id:
+            return metadata_path.parent
+    return None
+
+
 def _build_conversion_plan(
     executable: str,
     sources: tuple[Path, ...],
@@ -423,7 +435,9 @@ def ingest_media(
     )
     safe_name = safe_cache_name(name)
     root = _resolve_cache_root(cache_directory)
-    final_dir = root / f"{safe_name}_{item_id}"
+    final_dir = _existing_cache_directory(root, item_id) or (
+        root / f"{safe_name}_{item_id}"
+    )
     date_added_utc = _date_added_utc(root, item_id)
     staging_dir = Path(tempfile.mkdtemp(prefix=f".{safe_name}_{item_id}_", dir=root))
     profile_resolver = image_profile_resolver or default_cache_image_profile

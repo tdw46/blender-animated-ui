@@ -12,11 +12,15 @@ from bpy.props import (
     StringProperty,
 )
 
-from .constants import DEFAULT_PREVIEW_FPS, MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
+from .constants import MAX_PREVIEW_FPS, MIN_PREVIEW_FPS
 from .gallery_query import (
-    DEFAULT_GALLERY_SORT,
     GALLERY_SORT_ITEMS,
     MEDIA_TYPE_FILTER_ITEMS,
+)
+from .gallery_settings import (
+    DEFAULT_GALLERY_SETTINGS,
+    MAX_THUMBNAIL_SCALE,
+    MIN_THUMBNAIL_SCALE,
 )
 
 
@@ -34,6 +38,30 @@ def _update_gallery_query(owner, context) -> None:
     if scene is not None and hasattr(scene, "animthumb_gallery_page"):
         scene.animthumb_gallery_page = 0
     _update_gallery_settings(None, context)
+
+
+def reset_gallery_settings(context) -> None:
+    """Restore every settings-cog control to its shared default."""
+    wm = context.window_manager
+    defaults = DEFAULT_GALLERY_SETTINGS
+    values = (
+        ("animthumb_gallery_search", defaults.search_text),
+        ("animthumb_gallery_media_type", defaults.media_type),
+        ("animthumb_gallery_sort", defaults.sort_mode),
+        ("animthumb_thumbnail_scale", defaults.thumbnail_scale),
+        ("animthumb_preview_fps", defaults.preview_fps),
+        ("animthumb_optimized_playback", defaults.optimized_playback),
+    )
+    changed = False
+    for property_name, default_value in values:
+        if getattr(wm, property_name) != default_value:
+            setattr(wm, property_name, default_value)
+            changed = True
+    scene = getattr(context, "scene", None)
+    if scene is not None and hasattr(scene, "animthumb_gallery_page"):
+        scene.animthumb_gallery_page = 0
+    if not changed:
+        _update_gallery_settings(wm, context)
 
 
 class ANIMTHUMB_PG_ThumbnailItem(bpy.types.PropertyGroup):
@@ -73,31 +101,31 @@ def register_properties() -> None:
     bpy.types.WindowManager.animthumb_gallery_search = StringProperty(
         name="Search",
         description="Filter animated thumbnails by name",
-        default="",
+        default=DEFAULT_GALLERY_SETTINGS.search_text,
         update=_update_gallery_query,
     )
     bpy.types.WindowManager.animthumb_gallery_media_type = EnumProperty(
         name="Media Type",
         description="Show only imported media of this source type",
         items=MEDIA_TYPE_FILTER_ITEMS,
-        default="ALL",
+        default=DEFAULT_GALLERY_SETTINGS.media_type,
         update=_update_gallery_query,
     )
     bpy.types.WindowManager.animthumb_gallery_sort = EnumProperty(
         name="Sort",
         description="Choose the animated thumbnail gallery order",
         items=GALLERY_SORT_ITEMS,
-        default=DEFAULT_GALLERY_SORT,
+        default=DEFAULT_GALLERY_SETTINGS.sort_mode,
         update=_update_gallery_query,
     )
     bpy.types.WindowManager.animthumb_thumbnail_scale = FloatProperty(
         name="Thumbnail Scale",
         description="Scale thumbnails in the animated preview gallery",
-        default=1.0,
-        min=0.5,
-        max=4.0,
-        soft_min=0.75,
-        soft_max=4.0,
+        default=DEFAULT_GALLERY_SETTINGS.thumbnail_scale,
+        min=MIN_THUMBNAIL_SCALE,
+        max=MAX_THUMBNAIL_SCALE,
+        soft_min=MIN_THUMBNAIL_SCALE,
+        soft_max=MAX_THUMBNAIL_SCALE,
         step=5,
         precision=2,
         update=_update_gallery_settings,
@@ -108,7 +136,7 @@ def register_properties() -> None:
             "Maximum live gallery redraw and playback rate from 8 to 60 FPS; "
             "import sampling is configured per media item"
         ),
-        default=DEFAULT_PREVIEW_FPS,
+        default=DEFAULT_GALLERY_SETTINGS.preview_fps,
         min=MIN_PREVIEW_FPS,
         max=MAX_PREVIEW_FPS,
         soft_min=MIN_PREVIEW_FPS,
@@ -122,7 +150,7 @@ def register_properties() -> None:
             "Pause animated thumbnails during scene playback, real viewport "
             "interaction, and scrolling inside this gallery"
         ),
-        default=False,
+        default=DEFAULT_GALLERY_SETTINGS.optimized_playback,
         update=_update_gallery_settings,
     )
     bpy.types.WindowManager.animthumb_status = StringProperty(
