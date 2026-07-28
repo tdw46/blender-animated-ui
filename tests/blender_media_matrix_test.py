@@ -36,16 +36,25 @@ for media_type in ("video", "apng", "sequence"):
         executable,
         sources,
         display_name=f"Matrix {media_type}",
-        target_fps=12,
+        target_fps=60,
     )
     if int(result["frame_count"]) < 1:
         raise RuntimeError(f"{media_type} produced no cached frames")
     result_ids.append(str(result["item_id"]))
+    source_fps = float(result["source_fps"])
+    effective_fps = float(result["effective_fps"])
+    if media_type != "sequence":
+        if source_fps <= 0.0:
+            raise RuntimeError(f"{media_type} source FPS was not detected")
+        if effective_fps > source_fps * 1.15:
+            raise RuntimeError(f"{media_type} was upsampled beyond its source FPS")
     results[media_type] = {
         "frame_count": int(result["frame_count"]),
         "duration_ms": int(result["duration_ms"]),
         "target_fps": int(result["target_fps"]),
-        "effective_fps": float(result["effective_fps"]),
+        "source_fps": source_fps,
+        "sample_fps": float(result["sample_fps"]),
+        "effective_fps": effective_fps,
     }
 
 library_count = package.library.refresh_scene(bpy.context.scene)

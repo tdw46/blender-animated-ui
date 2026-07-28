@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import tempfile
@@ -23,19 +22,16 @@ from .constants import (
     MAX_THUMBNAIL_EDGE,
 )
 from .frame_rate import (
+    bounded_sample_indices,
     clamp_preview_fps,
     frame_interval_ms,
     target_sample_fps,
 )
+from .media_probe import MediaProbe, parse_ffmpeg_probe
 from .paths import cache_root
 
-_DURATION_PATTERN = re.compile(
-    r"Duration:\s*(?P<hours>\d+):(?P<minutes>\d+):(?P<seconds>\d+(?:\.\d+)?)"
-)
-_DIMENSION_PATTERN = re.compile(r"(?<!\d)(?P<width>\d{2,6})x(?P<height>\d{2,6})(?!\d)")
 
-
-def _ffmpeg_probe(executable: str, input_args: list[str]) -> tuple[float, int, int]:
+def _ffmpeg_probe(executable: str, input_args: list[str]) -> MediaProbe:
     result = subprocess.run(
         [
             executable,
@@ -54,24 +50,7 @@ def _ffmpeg_probe(executable: str, input_args: list[str]) -> tuple[float, int, i
         timeout=120,
         check=False,
     )
-    output = f"{result.stderr}\n{result.stdout}"
-    duration_seconds = 0.0
-    duration_match = _DURATION_PATTERN.search(output)
-    if duration_match is not None:
-        duration_seconds = (
-            int(duration_match.group("hours")) * 3600
-            + int(duration_match.group("minutes")) * 60
-            + float(duration_match.group("seconds"))
-        )
-    width = 0
-    height = 0
-    for match in _DIMENSION_PATTERN.finditer(output):
-        candidate_width = int(match.group("width"))
-        candidate_height = int(match.group("height"))
-        if candidate_width > 0 and candidate_height > 0:
-            width, height = candidate_width, candidate_height
-            break
-    return max(0.0, duration_seconds), width, height
+    return parse_ffmpeg_probe(f"{result.stderr}\n{result.stdout}")
 
 
 def _escape_concat_path(path: Path) -> str:
@@ -81,14 +60,13 @@ def _escape_concat_path(path: Path) -> str:
 def _sequence_input_args(
     source_paths: tuple[Path, ...],
     staging_dir: Path,
-    target_fps: int,
+    frame_duration_seconds: float,
 ) -> list[str]:
     concat_path = staging_dir / "sequence.ffconcat"
     lines = ["ffconcat version 1.0"]
     for path in source_paths:
         lines.append(f"file '{_escape_concat_path(path)}'")
-        lines.append(f"duration {1.0 / float(target_fps):.9f}")
-    lines.append(f"file '{_escape_concat_path(source_paths[-1])}'")
+        lines.append(f"duration {max(0.000001, frame_duration_seconds):.9f}")
     concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return ["-f", "concat", "-safe", "0", "-i", str(concat_path)]
 
@@ -123,27 +101,48 @@ def ingest_media(
     staging_dir = Path(tempfile.mkdtemp(prefix=f".{safe_name}_{item_id}_", dir=root))
 
     try:
+        is_sequence = len(sources) > 1
+        sequence_sources = (
+            tuple(
+                sources[index]
+                for index in bounded_sample_indices(
+                    len(sources),
+                    MAX_SAMPLED_FRAMES,
+                )
+            )
+            if is_sequence
+            else ()
+        )
+        sequence_duration_seconds = (
+            len(sources) / float(resolved_target_fps) if is_sequence else 0.0
+        )
         input_args = (
-            _sequence_input_args(sources, staging_dir, resolved_target_fps)
-            if len(sources) > 1
+            _sequence_input_args(
+                sequence_sources,
+                staging_dir,
+                sequence_duration_seconds / len(sequence_sources),
+            )
+            if is_sequence
             else _single_input_args(sources[0])
         )
-        duration_seconds, width, height = _ffmpeg_probe(executable, input_args)
-        if len(sources) > 1:
-            duration_seconds = max(
-                duration_seconds,
-                len(sources) / float(resolved_target_fps),
-            )
+        probe = _ffmpeg_probe(executable, input_args)
+        duration_seconds = probe.duration_seconds
+        width = probe.width
+        height = probe.height
+        source_fps = 0.0 if is_sequence else probe.source_fps
+        if is_sequence:
+            duration_seconds = sequence_duration_seconds
 
         sample_fps = target_sample_fps(
             duration_seconds,
             resolved_target_fps,
             MAX_SAMPLED_FRAMES,
+            source_fps=source_fps,
         )
         output_pattern = staging_dir / "raw_%05d.png"
         filter_chain = (
-            f"fps={sample_fps:.8f},"
-            f"scale={MAX_THUMBNAIL_EDGE}:{MAX_THUMBNAIL_EDGE}:"
+            ("" if is_sequence else f"fps={sample_fps:.8f},")
+            + f"scale={MAX_THUMBNAIL_EDGE}:{MAX_THUMBNAIL_EDGE}:"
             "force_original_aspect_ratio=decrease:flags=lanczos,"
             f"pad={MAX_THUMBNAIL_EDGE}:{MAX_THUMBNAIL_EDGE}:"
             "(ow-iw)/2:(oh-ih)/2:color=0x00000000,"
@@ -160,7 +159,7 @@ def ingest_media(
             "-vf",
             filter_chain,
             "-frames:v",
-            str(MAX_SAMPLED_FRAMES),
+            str(len(sequence_sources) if is_sequence else MAX_SAMPLED_FRAMES),
             "-vsync",
             "vfr",
             str(output_pattern),
@@ -184,7 +183,7 @@ def ingest_media(
             total_ms = max(1, int(round(duration_seconds * 1000.0)))
             frame_duration_ms = max(1, int(round(total_ms / len(raw_frames))))
         elif len(raw_frames) > 1:
-            frame_duration_ms = frame_interval_ms(resolved_target_fps)
+            frame_duration_ms = frame_interval_ms(sample_fps)
         else:
             frame_duration_ms = DEFAULT_STATIC_FRAME_MS
 
@@ -206,6 +205,8 @@ def ingest_media(
             width=width,
             height=height,
             target_fps=resolved_target_fps,
+            source_fps=source_fps,
+            sample_fps=sample_fps,
         )
 
         final_dir = root / f"{safe_name}_{item_id}"
@@ -232,6 +233,8 @@ def ingest_media(
             "width": width,
             "height": height,
             "target_fps": resolved_target_fps,
+            "source_fps": source_fps,
+            "sample_fps": sample_fps,
             "effective_fps": (
                 (len(records) * 1000.0) / records[-1].end_ms
                 if len(records) > 1

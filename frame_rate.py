@@ -42,14 +42,18 @@ def target_sample_fps(
     duration_seconds: float,
     requested_fps: int | float | None,
     max_frames: int,
+    *,
+    source_fps: float = 0.0,
 ) -> float:
-    """Bound FFmpeg sampling by both the requested rate and frame budget."""
+    """Bound FFmpeg sampling by requested, source, and frame-budget rates."""
     requested = float(clamp_preview_fps(requested_fps))
     duration = max(0.0, float(duration_seconds))
     frame_budget = max(1, int(max_frames))
+    native = max(0.0, float(source_fps))
+    rate = min(requested, native) if native > 0.0 else requested
     if duration <= 0.0:
-        return requested
-    return max(0.01, min(requested, frame_budget / duration))
+        return rate
+    return max(0.01, min(rate, frame_budget / duration))
 
 
 def sample_wait_ms(
@@ -75,3 +79,17 @@ def effective_fps(frame_count: int, duration_ms: int) -> float:
     if frames <= 1 or duration <= 0:
         return 0.0
     return (frames * 1000.0) / duration
+
+
+def bounded_sample_indices(item_count: int, max_items: int) -> tuple[int, ...]:
+    """Choose evenly distributed source indices within a fixed frame budget."""
+    count = max(0, int(item_count))
+    budget = max(1, int(max_items))
+    if count <= budget:
+        return tuple(range(count))
+    if budget == 1:
+        return (0,)
+    return tuple(
+        min(count - 1, int(round(index * (count - 1) / (budget - 1))))
+        for index in range(budget)
+    )

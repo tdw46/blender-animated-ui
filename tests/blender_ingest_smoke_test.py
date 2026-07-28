@@ -13,7 +13,7 @@ if not sample_path:
     raise RuntimeError("ANIMTHUMB_SAMPLE_MEDIA is required")
 
 addon_utils.enable(MODULE, default_set=True)
-bpy.context.window_manager.animthumb_preview_fps = 6
+bpy.context.window_manager.animthumb_preview_fps = 60
 result = set(bpy.ops.animthumb.ingest_media(filepath=sample_path))
 if "FINISHED" not in result:
     raise RuntimeError(f"Ingest operator returned {sorted(result)}")
@@ -32,22 +32,28 @@ package = __import__(
 preview_cache = package.preview_cache
 preview_engine = package.preview_engine
 metadata = package.cache_format.read_metadata(item.cache_dir)
-if float(metadata.get("target_fps", 0.0)) != 6.0:
+if float(metadata.get("target_fps", 0.0)) != 60.0:
     raise RuntimeError("Ingest did not honor the configured preview frame rate")
+source_fps = float(metadata.get("source_fps", 0.0))
+effective_fps = float(metadata.get("effective_fps", 0.0))
+if source_fps <= 0.0:
+    raise RuntimeError("Ingest did not record the source frame rate")
+if effective_fps > source_fps * 1.15:
+    raise RuntimeError("Ingest upsampled beyond the source frame rate")
 cached = preview_cache.load_item(item)
 if cached is None:
     raise RuntimeError("Preview cache did not load")
 now_ms = preview_engine.preview_clock_ms()
-icon_id = preview_cache.icon_id(item.item_id, now_ms, fps_limit=6)
+icon_id = preview_cache.icon_id(item.item_id, now_ms, fps_limit=60)
 signature = preview_cache.frame_signature(
     (item.item_id,),
     now_ms,
-    fps_limit=6,
+    fps_limit=60,
 )
 interval = preview_cache.next_interval_seconds(
     (item.item_id,),
     now_ms,
-    fps_limit=6,
+    fps_limit=60,
 )
 if not signature:
     raise RuntimeError("Animated frame signature is empty")
@@ -61,7 +67,9 @@ print(
         "frame_count": int(item.frame_count),
         "duration_ms": int(item.duration_ms),
         "target_fps": float(metadata["target_fps"]),
-        "effective_fps": float(metadata["effective_fps"]),
+        "source_fps": source_fps,
+        "sample_fps": float(metadata["sample_fps"]),
+        "effective_fps": effective_fps,
         "icon_id": int(icon_id),
         "signature": signature,
         "next_interval_seconds": float(interval),

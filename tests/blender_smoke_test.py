@@ -21,6 +21,9 @@ scene = bpy.context.scene
 scene.animthumb_gallery_page = 0
 if bpy.context.window_manager.animthumb_preview_fps != 10:
     raise RuntimeError("Preview frame-rate setting has the wrong default")
+fps_property = bpy.types.WindowManager.bl_rna.properties["animthumb_preview_fps"]
+if int(fps_property.hard_max) != 60:
+    raise RuntimeError("Preview frame-rate setting does not allow 60 FPS")
 print(
     "ANIMTHUMB_SMOKE",
     {
@@ -29,6 +32,7 @@ print(
         "scene_properties": True,
         "optimized_mode": True,
         "preview_fps": int(bpy.context.window_manager.animthumb_preview_fps),
+        "preview_fps_max": int(fps_property.hard_max),
     },
 )
 

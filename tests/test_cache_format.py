@@ -60,11 +60,15 @@ class CacheFormatTests(unittest.TestCase):
                 width=320,
                 height=180,
                 target_fps=12,
+                source_fps=24,
+                sample_fps=12,
             )
             metadata = read_metadata(cache_dir)
             self.assertEqual(metadata["item_id"], "test")
             self.assertEqual(metadata["duration_ms"], 300)
             self.assertEqual(metadata["target_fps"], 12.0)
+            self.assertEqual(metadata["source_fps"], 24.0)
+            self.assertEqual(metadata["sample_fps"], 12.0)
             self.assertEqual(metadata["effective_fps"], 10.0)
             self.assertEqual(len(metadata["records"]), 3)
 

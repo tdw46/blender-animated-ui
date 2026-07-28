@@ -92,7 +92,7 @@ class ANIMTHUMB_PT_GallerySettingsPopover(bpy.types.Panel):
         layout.prop(
             wm,
             "animthumb_preview_fps",
-            text="Preview Frame Rate",
+            text="Maximum Preview FPS",
             slider=True,
         )
         layout.prop(
@@ -267,8 +267,15 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                 action_row = column.row(align=True)
                 action_row.scale_y = 0.82
                 action_row.alignment = "CENTER"
+                frame_count = int(item.frame_count)
+                effective_fps = float(item.effective_fps)
+                rate_text = (
+                    f"{effective_fps:.1f} FPS"
+                    if frame_count > 1 and effective_fps > 0.0
+                    else "Still"
+                )
                 action_row.label(
-                    text=f"{int(item.frame_count)} frames",
+                    text=f"{frame_count}f · {rate_text}",
                     icon="TIME",
                 )
                 delete = action_row.operator(

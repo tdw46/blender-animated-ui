@@ -18,6 +18,8 @@ class CachedPreview:
     records: tuple[FrameRecord, ...]
     icon_keys: tuple[str, ...]
     duration_ms: int
+    source_fps: float
+    effective_fps: float
 
 
 _COLLECTION = None
@@ -103,6 +105,11 @@ def load_item(item, *, force: bool = False) -> CachedPreview | None:
         records=records,
         icon_keys=tuple(icon_keys),
         duration_ms=max(1, int(records[-1].end_ms)),
+        source_fps=max(0.0, float(metadata.get("source_fps", 0.0) or 0.0)),
+        effective_fps=max(
+            0.0,
+            float(metadata.get("effective_fps", 0.0) or 0.0),
+        ),
     )
     _ITEMS[item_id] = cached
     return cached
@@ -110,6 +117,18 @@ def load_item(item, *, force: bool = False) -> CachedPreview | None:
 
 def is_loaded(item_id: str) -> bool:
     return str(item_id) in _ITEMS
+
+
+def _item_fps_limit(
+    cached: CachedPreview,
+    requested_limit: int | float | None,
+) -> int | float | None:
+    limits: list[float] = []
+    if requested_limit is not None:
+        limits.append(max(0.01, float(requested_limit)))
+    if cached.source_fps > 0.0:
+        limits.append(cached.source_fps)
+    return min(limits) if limits else None
 
 
 def frame_index(
@@ -121,7 +140,8 @@ def frame_index(
     cached = _ITEMS.get(str(item_id))
     if cached is None or not cached.records:
         return 0
-    loop_ms = sampled_clock_ms(now_ms, fps_limit) % cached.duration_ms
+    item_fps_limit = _item_fps_limit(cached, fps_limit)
+    loop_ms = sampled_clock_ms(now_ms, item_fps_limit) % cached.duration_ms
     for record in cached.records:
         if record.start_ms <= loop_ms < record.end_ms:
             return record.index
@@ -137,7 +157,8 @@ def milliseconds_until_next_frame(
     cached = _ITEMS.get(str(item_id))
     if cached is None or len(cached.records) <= 1:
         return 500
-    sampled_now_ms = sampled_clock_ms(now_ms, fps_limit)
+    item_fps_limit = _item_fps_limit(cached, fps_limit)
+    sampled_now_ms = sampled_clock_ms(now_ms, item_fps_limit)
     loop_ms = sampled_now_ms % cached.duration_ms
     for record in cached.records:
         if record.start_ms <= loop_ms < record.end_ms:
@@ -145,13 +166,13 @@ def milliseconds_until_next_frame(
                 now_ms,
                 sampled_now_ms,
                 record.end_ms - loop_ms,
-                fps_limit,
+                item_fps_limit,
             )
     return sample_wait_ms(
         now_ms,
         sampled_now_ms,
         cached.duration_ms - loop_ms + cached.records[0].end_ms,
-        fps_limit,
+        item_fps_limit,
     )
 
 

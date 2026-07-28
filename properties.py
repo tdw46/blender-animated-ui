@@ -28,6 +28,13 @@ class ANIMTHUMB_PG_ThumbnailItem(bpy.types.PropertyGroup):
     source_path: StringProperty(name="Source", subtype="FILE_PATH")
     frame_count: IntProperty(name="Frame Count", default=0, min=0)
     duration_ms: IntProperty(name="Duration (ms)", default=0, min=0)
+    source_fps: FloatProperty(name="Source FPS", default=0.0, min=0.0, precision=3)
+    effective_fps: FloatProperty(
+        name="Effective FPS",
+        default=0.0,
+        min=0.0,
+        precision=3,
+    )
     width: IntProperty(name="Source Width", default=0, min=0)
     height: IntProperty(name="Source Height", default=0, min=0)
 
@@ -59,10 +66,10 @@ def register_properties() -> None:
         update=_update_gallery_settings,
     )
     bpy.types.WindowManager.animthumb_preview_fps = IntProperty(
-        name="Preview Frame Rate",
+        name="Maximum Preview FPS",
         description=(
-            "Maximum live thumbnail sampling rate and target frame rate for "
-            "newly generated caches"
+            "Maximum live and ingest rate; each thumbnail remains capped by "
+            "its own source frame rate"
         ),
         default=DEFAULT_PREVIEW_FPS,
         min=MIN_PREVIEW_FPS,

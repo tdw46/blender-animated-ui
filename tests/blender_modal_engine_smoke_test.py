@@ -9,25 +9,43 @@ import bpy
 
 MODULE = "bl_ext.user_default.blender_animated_ui"
 sample_path = os.environ.get("ANIMTHUMB_SAMPLE_MEDIA", "")
+second_sample_path = os.environ.get("ANIMTHUMB_SECOND_MEDIA", "")
 if not sample_path:
     raise RuntimeError("ANIMTHUMB_SAMPLE_MEDIA is required")
 
 addon_utils.enable(MODULE, default_set=True)
-bpy.context.window_manager.animthumb_preview_fps = 8
+bpy.context.window_manager.animthumb_preview_fps = 60
 package = __import__(
     MODULE,
     fromlist=["ffmpeg_bridge", "library", "media_ingest", "preview_engine"],
 )
 ffmpeg = str(package.ffmpeg_bridge.status().get("executable", "") or "")
-package.media_ingest.ingest_media(
-    ffmpeg,
-    [sample_path],
-    display_name="Modal Smoke",
-    target_fps=8,
-)
+source_paths = [sample_path]
+if second_sample_path:
+    source_paths.append(second_sample_path)
+result_ids = []
+for index, source_path in enumerate(source_paths):
+    result = package.media_ingest.ingest_media(
+        ffmpeg,
+        [source_path],
+        display_name=f"Modal Smoke {index + 1}",
+        target_fps=60,
+    )
+    result_ids.append(str(result["item_id"]))
 package.library.refresh_scene(bpy.context.scene)
-item = bpy.context.scene.animthumb_items[0]
-package.preview_cache.load_item(item)
+items = tuple(
+    item
+    for item in bpy.context.scene.animthumb_items
+    if str(item.item_id) in result_ids
+)
+if len(items) < len(source_paths):
+    raise RuntimeError("Mixed-rate modal caches were not loaded")
+for item in items:
+    package.preview_cache.load_item(item)
+effective_rates = tuple(float(item.effective_fps) for item in items)
+item_ids = tuple(str(item.item_id) for item in items)
+if second_sample_path and len({round(rate, 1) for rate in effective_rates}) < 2:
+    raise RuntimeError("Mixed-rate modal caches did not retain distinct rates")
 
 window = bpy.context.window_manager.windows[0]
 area = next(area for area in window.screen.areas if area.type == "VIEW_3D")
@@ -41,7 +59,7 @@ with bpy.context.temp_override(
 ):
     package.preview_engine.register_ui_region(
         bpy.context,
-        (str(item.item_id),),
+        item_ids,
     )
     package.preview_engine.schedule_start()
 
@@ -51,6 +69,8 @@ def verify_and_quit() -> None:
     heartbeat = float(package.preview_engine._LAST_HEARTBEAT_MONOTONIC)
     preview_tick = int(bpy.context.window_manager.animthumb_preview_tick)
     preview_fps = package.preview_engine.preview_frame_rate()
+    fastest_source_fps = max(effective_rates, default=0.0)
+    maximum_expected_ticks = max(4, int(fastest_source_fps * 1.5) + 10)
     print(
         "ANIMTHUMB_MODAL_ENGINE",
         {
@@ -58,19 +78,22 @@ def verify_and_quit() -> None:
             "heartbeat": heartbeat > 0.0,
             "preview_tick": preview_tick,
             "preview_fps": preview_fps,
+            "effective_rates": effective_rates,
+            "maximum_expected_ticks": maximum_expected_ticks,
         },
     )
     if (
         not running
         or heartbeat <= 0.0
         or preview_tick <= 0
-        or preview_tick > 15
-        or preview_fps != 8
+        or preview_tick > maximum_expected_ticks
+        or preview_fps != 60
     ):
         raise RuntimeError("The real-window modal preview engine did not advance")
     package.preview_engine.stop()
-    if not package.library.remove_item(item.item_id):
-        raise RuntimeError("Modal smoke cache cleanup failed")
+    for item_id in item_ids:
+        if not package.library.remove_item(item_id):
+            raise RuntimeError("Modal smoke cache cleanup failed")
     bpy.ops.wm.quit_blender()
     return None
 

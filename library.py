@@ -9,6 +9,7 @@ import bpy
 
 from .cache_format import read_metadata
 from .constants import GALLERY_PAGE_SIZE
+from .frame_rate import effective_fps
 from .paths import cache_root
 
 _STARTUP_REFRESH_SCHEDULED = False
@@ -23,6 +24,14 @@ def _populate_item(item, cache_dir: Path, metadata: dict) -> None:
     records = metadata.get("records") or ()
     item.frame_count = len(records)
     item.duration_ms = max(0, int(metadata.get("duration_ms", 0) or 0))
+    item.source_fps = max(0.0, float(metadata.get("source_fps", 0.0) or 0.0))
+    item.effective_fps = max(
+        0.0,
+        float(
+            metadata.get("effective_fps", 0.0)
+            or effective_fps(item.frame_count, item.duration_ms)
+        ),
+    )
     item.width = max(0, int(metadata.get("width", 0) or 0))
     item.height = max(0, int(metadata.get("height", 0) or 0))
 
