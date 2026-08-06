@@ -370,6 +370,12 @@ class ANIMTHUMB_PT_AnimatedGallery(bpy.types.Panel):
                     text=f"{frame_count}f · {rate_text}",
                     icon="TIME",
                 )
+                popup = action_row.operator(
+                    "animthumb.show_animated_popup",
+                    text="",
+                    icon="INFO",
+                )
+                popup.item_id = str(item.item_id)
                 actions = action_row.operator(
                     "animthumb.open_item_actions",
                     text="",

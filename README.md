@@ -19,6 +19,8 @@ The playback architecture provides:
 - adaptive pagination sized from the RAM target and decoded-frame cost;
 - only the visible gallery page advances;
 - only the N-panel UI regions that drew the gallery are redrawn;
+- each gallery card can open a close-safe animated `invoke_props_dialog`
+  example that shares the same frame cache, RAM budget, and scheduler;
 - a settings cog with thumbnail sizing, RAM control, an 8–60 FPS live ceiling,
   and opt-in optimized playback;
 - viewport, timeline, and gallery-scroll pausing that matches the Beyond VRM
@@ -41,6 +43,9 @@ The playback architecture provides:
 4. Click **Add Animated Media**.
 5. Select one animated/image/video file, or multi-select an ordered image
    sequence.
+6. Click the info button on any gallery card to open its animated dialog
+   example. Closing or cancelling the dialog releases its temporary UI target
+   before Blender frees that region.
 
 The file browser analyzes the active media and shows its native FPS, full
 duration, expected cache FPS, expected cache size, editable **Imported Name**,
@@ -99,7 +104,7 @@ then verify the result:
 
 ```bash
 BLENDER_PATH="/absolute/path/to/blender" ./build.sh
-python3 tools/verify_package.py blender_animated_ui-0.1.0-macos_arm64.zip
+python3 tools/verify_package.py blender_animated_ui-0.2.0-macos_arm64.zip
 ```
 
 On Windows, set `BLENDER_PATH` and run `build.bat`, then run the same verifier
@@ -167,10 +172,25 @@ Each feature has a narrow boundary so projects can copy only what they need.
 | `ops_gallery.py` | Gallery pagination and settings reset | Blender operators |
 | `ui_media_settings.py` | Shared file-picker and refresh-dialog presentation | Blender `UILayout`/context, without a direct `bpy` import |
 | `ui_gallery.py` | N-panel grid and settings-cog popover | Blender UI |
+| `ui_popup.py` | Owner-scoped animated properties-dialog example | Blender UI |
 | `utils.py` | Small Blender-facing operator helpers | Blender runtime |
 | `auto_load.py` | Discover and register extension-owned Blender classes | Blender registration |
 
 The top-level `__init__.py` is intentionally limited to lifecycle wiring.
+
+### Close-safe animated dialogs
+
+`invoke_props_dialog()` owns a `TEMPORARY` region that is not part of the
+invoking area’s normal region list. The example captures `context.region_popup`
+during `draw()`, tags only that region from the existing app-timer watchdog,
+and advances it through the same duration-aware cache scheduler as the gallery.
+
+Every temporary target is keyed to its operator owner. Both `execute()` and
+`cancel()` synchronously release that target before Blender frees the popup
+region. Never treat a nonzero RNA pointer as proof that a closed temporary
+region is still valid, and do not use `Window.modal_operators` as a liveness
+test for `invoke_props_dialog()` owners. The normal gallery modal deliberately
+skips temporary targets so two drivers cannot redraw the same popup.
 
 Recommended arrangement inside a destination extension:
 
@@ -866,7 +886,7 @@ After building a release candidate, verify the actual artifact rather than only
 the source tree:
 
 ```bash
-python3 tools/verify_package.py blender_animated_ui-0.1.0-macos_arm64.zip
+python3 tools/verify_package.py blender_animated_ui-0.2.0-macos_arm64.zip
 ```
 
 Runtime validation should cover every declared host version and UI scale. The
@@ -879,6 +899,8 @@ minimum regression matrix is:
 - timeline playback and recovery;
 - sleep/wake timer replacement;
 - visible-page filtering; and
+- opening an animated card dialog, confirming and cancelling it, and verifying
+  that animation advances while open with no redraw or icon lookup after close;
 - zero directory/metadata scans or cache generation during hot playback, with
   only bounded scheduler frame loads.
 

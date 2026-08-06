@@ -7,7 +7,7 @@ from . import auto_load
 bl_info = {
     "name": "Animated Thumbnail Preview Demo",
     "author": "Tyler Walker",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Animated Previews",
     "description": "Reusable animated preview thumbnail gallery example",

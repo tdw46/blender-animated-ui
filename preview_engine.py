@@ -39,7 +39,9 @@ _VIEWPORT_POINTER_BUTTONS: set[str] = set()
 _VIEWPORT_TRANSFORM_ACTIVE = False
 _ANIMATION_PLAYBACK_ACTIVE = False
 _HOST_WINDOW_PTR = 0
-_UI_REGION_TARGETS: dict[int, dict] = {}
+_UI_REGION_TARGETS: dict[object, dict] = {}
+_POPUP_INVOKE_CONTEXTS: dict[int, dict] = {}
+_RELEASED_POPUP_OWNER_PTRS: set[int] = set()
 _WARM_ITEM_IDS: tuple[str, ...] = ()
 _MACOS_BUTTON_QUERY = None
 _MACOS_BUTTON_QUERY_INITIALIZED = False
@@ -95,6 +97,85 @@ def register_ui_region(context, visible_item_ids: tuple[str, ...]) -> None:
         )
 
 
+def capture_popup_context(context, owner) -> None:
+    """Remember the durable window/area that invoked a temporary popup."""
+
+    owner_ptr = _rna_pointer(owner)
+    window = getattr(context, "window", None)
+    area = getattr(context, "area", None)
+    if owner_ptr == 0 or window is None:
+        return
+    _RELEASED_POPUP_OWNER_PTRS.discard(owner_ptr)
+    _POPUP_INVOKE_CONTEXTS[owner_ptr] = {
+        "window": window,
+        "area": area,
+        "scene": getattr(context, "scene", None),
+    }
+
+
+def register_popup_region(context, item_id: str, owner) -> bool:
+    """Register a draw-time TEMPORARY region with explicit operator ownership."""
+
+    global _HOST_WINDOW_PTR
+    owner_ptr = _rna_pointer(owner)
+    if owner_ptr in _RELEASED_POPUP_OWNER_PTRS:
+        return False
+    captured = _POPUP_INVOKE_CONTEXTS.get(owner_ptr, {})
+    window = getattr(context, "window", None) or captured.get("window")
+    area = getattr(context, "area", None) or captured.get("area")
+    scene = getattr(context, "scene", None) or captured.get("scene")
+    region = getattr(context, "region_popup", None)
+    if region is None and getattr(getattr(context, "region", None), "type", "") == (
+        "TEMPORARY"
+    ):
+        region = context.region
+    if owner_ptr == 0 or window is None or region is None:
+        return False
+    region_ptr = _rna_pointer(region)
+    if region_ptr == 0:
+        return False
+    resolved_item_id = str(item_id or "")
+    if not resolved_item_id:
+        return False
+    _HOST_WINDOW_PTR = _rna_pointer(window)
+    target_key = ("POPUP", owner_ptr, region_ptr, resolved_item_id)
+    _UI_REGION_TARGETS[target_key] = {
+        "window_ptr": _rna_pointer(window),
+        "area_ptr": _rna_pointer(area),
+        "scene_ptr": _rna_pointer(scene),
+        "visible_item_ids": (resolved_item_id,),
+        "last_seen": time.monotonic(),
+        "direct_region": region,
+        "direct_area": area,
+        "is_transient": True,
+        "owner_ptr": owner_ptr,
+    }
+    return True
+
+
+def release_popup_region(owner) -> None:
+    """Release a popup target before Blender frees its TEMPORARY region."""
+
+    owner_ptr = _rna_pointer(owner)
+    if owner_ptr == 0:
+        return
+    _release_popup_region_owner_ptr(owner_ptr)
+
+
+def _release_popup_region_owner_ptr(owner_ptr: int) -> None:
+    """Keep all owner-keyed cleanup in one pointer-stable operation."""
+
+    global _LAST_SIGNATURE
+    _RELEASED_POPUP_OWNER_PTRS.add(owner_ptr)
+    _POPUP_INVOKE_CONTEXTS.pop(owner_ptr, None)
+    for target_key, target in tuple(_UI_REGION_TARGETS.items()):
+        if not bool(target.get("is_transient")):
+            continue
+        if int(target.get("owner_ptr", 0) or 0) == owner_ptr:
+            _UI_REGION_TARGETS.pop(target_key, None)
+    _LAST_SIGNATURE = None
+
+
 def _live_ui_targets(now_monotonic: float | None = None) -> tuple:
     wm = getattr(bpy.context, "window_manager", None)
     if wm is None:
@@ -104,18 +185,23 @@ def _live_ui_targets(now_monotonic: float | None = None) -> tuple:
         _rna_pointer(window): window for window in getattr(wm, "windows", ())
     }
     live_targets = []
-    stale_region_ptrs = []
-    for region_ptr, target in tuple(_UI_REGION_TARGETS.items()):
+    stale_target_keys = []
+    for target_key, target in tuple(_UI_REGION_TARGETS.items()):
         last_seen = float(target.get("last_seen", 0.0) or 0.0)
         if last_seen and current_time - last_seen > PREVIEW_UI_TARGET_STALE_SECONDS:
-            stale_region_ptrs.append(region_ptr)
+            stale_target_keys.append(target_key)
+            continue
+        direct_region = target.get("direct_region")
+        if direct_region is not None:
+            live_targets.append((direct_region, target))
             continue
         window = windows_by_ptr.get(int(target.get("window_ptr", 0) or 0))
         screen = getattr(window, "screen", None)
         if screen is None:
-            stale_region_ptrs.append(region_ptr)
+            stale_target_keys.append(target_key)
             continue
         resolved_region = None
+        region_ptr = int(target_key)
         area_ptr = int(target.get("area_ptr", 0) or 0)
         for area in getattr(screen, "areas", ()):
             if _rna_pointer(area) != area_ptr:
@@ -129,11 +215,11 @@ def _live_ui_targets(now_monotonic: float | None = None) -> tuple:
                     break
             break
         if resolved_region is None:
-            stale_region_ptrs.append(region_ptr)
+            stale_target_keys.append(target_key)
             continue
         live_targets.append((resolved_region, target))
-    for region_ptr in stale_region_ptrs:
-        _UI_REGION_TARGETS.pop(region_ptr, None)
+    for target_key in stale_target_keys:
+        _UI_REGION_TARGETS.pop(target_key, None)
     return tuple(live_targets)
 
 
@@ -168,6 +254,19 @@ def tag_targeted_redraw(item_ids: set[str] | None = None) -> None:
             region.tag_redraw()
         except Exception:
             pass
+        if bool(target.get("is_transient")):
+            refresh_ui = getattr(region, "tag_refresh_ui", None)
+            try:
+                if callable(refresh_ui):
+                    refresh_ui()
+            except (AttributeError, ReferenceError, RuntimeError):
+                pass
+            area = target.get("direct_area")
+            if area is not None:
+                try:
+                    area.tag_redraw()
+                except (AttributeError, ReferenceError, RuntimeError):
+                    pass
 
 
 def tag_targeted_layout_refresh() -> None:
@@ -474,6 +573,8 @@ def _load_post_handler(*_args) -> None:
 
     stop()
     _UI_REGION_TARGETS.clear()
+    _POPUP_INVOKE_CONTEXTS.clear()
+    _RELEASED_POPUP_OWNER_PTRS.clear()
     _WARM_ITEM_IDS = ()
     library.schedule_startup_refresh()
 
@@ -498,11 +599,66 @@ def _engine_responsive(now_monotonic: float | None = None) -> bool:
     return current_time - _LAST_HEARTBEAT_MONOTONIC <= stale_after
 
 
+def _has_live_popup_target() -> bool:
+    return any(
+        bool(target.get("is_transient")) for _region, target in _live_ui_targets()
+    )
+
+
+def _process_visible_tick(window_manager=None, now_ms: int | None = None) -> tuple:
+    global _LAST_SIGNATURE
+    global _NOW_MS
+
+    ids = visible_item_ids()
+    if not ids:
+        _LAST_SIGNATURE = None
+        return PREVIEW_HEALTH_CHECK_INTERVAL_SECONDS, False
+    from . import preview_cache
+
+    resolved_now_ms = preview_clock_ms() if now_ms is None else int(now_ms)
+    fps_limit = preview_frame_rate()
+    preview_cache.service_visible_items(
+        ids,
+        resolved_now_ms,
+        fps_limit=fps_limit,
+        ram_budget_bytes=preview_ram_budget_bytes(),
+    )
+    signature = preview_cache.frame_signature(
+        ids,
+        resolved_now_ms,
+        fps_limit=fps_limit,
+    )
+    if signature != _LAST_SIGNATURE:
+        changed_item_ids = _changed_signature_items(_LAST_SIGNATURE, signature)
+        _LAST_SIGNATURE = signature
+        _NOW_MS = resolved_now_ms
+        wm = window_manager or getattr(bpy.context, "window_manager", None)
+        if wm is not None:
+            wm.animthumb_preview_tick = (
+                int(getattr(wm, "animthumb_preview_tick", 0) or 0) + 1
+            ) % 1_000_000
+        tag_targeted_redraw(changed_item_ids)
+    return (
+        preview_cache.next_interval_seconds(
+            ids,
+            resolved_now_ms,
+            fps_limit=fps_limit,
+        ),
+        True,
+    )
+
+
 def _watchdog_tick() -> float:
     ids = visible_item_ids()
     from . import preview_cache
 
     preview_cache.trim_offscreen_items(warm_item_ids())
+    # A properties dialog captures window TIMER events, so its explicitly
+    # owned TEMPORARY target advances from this existing app-timer watchdog.
+    if _has_live_popup_target():
+        next_interval, processed = _process_visible_tick()
+        if processed:
+            return next_interval
     if ids and not _engine_responsive():
         if _ENGINE_RUNNING:
             stop()
@@ -713,9 +869,6 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
-        global _LAST_SIGNATURE
-        global _NOW_MS
-
         if not _ENGINE_RUNNING or _ENGINE_INSTANCE is not self:
             self._shutdown()
             return {"CANCELLED"}
@@ -728,6 +881,11 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                 except Exception:
                     return {"PASS_THROUGH"}
             _mark_heartbeat()
+            # The app-timer watchdog exclusively owns temporary popup regions.
+            # Never let a queued gallery TIMER dereference one during close.
+            if _has_live_popup_target():
+                self._schedule_interval(PREVIEW_HEALTH_CHECK_INTERVAL_SECONDS)
+                return {"PASS_THROUGH"}
             if _optimized_playback_enabled():
                 if _is_animation_playing():
                     self._schedule_interval(PREVIEW_PLAYBACK_PAUSE_INTERVAL_SECONDS)
@@ -738,46 +896,10 @@ class ANIMTHUMB_OT_PreviewEngine(bpy.types.Operator):
                 ) or _has_recent_panel_scroll():
                     self._schedule_interval(PREVIEW_INTERACTION_PAUSE_INTERVAL_SECONDS)
                     return {"PASS_THROUGH"}
-            ids = visible_item_ids()
-            if ids:
-                from . import preview_cache
-
-                now_ms = preview_clock_ms()
-                fps_limit = preview_frame_rate()
-                preview_cache.service_visible_items(
-                    ids,
-                    now_ms,
-                    fps_limit=fps_limit,
-                    ram_budget_bytes=preview_ram_budget_bytes(),
-                )
-                signature = preview_cache.frame_signature(
-                    ids,
-                    now_ms,
-                    fps_limit=fps_limit,
-                )
-                if signature != _LAST_SIGNATURE:
-                    changed_item_ids = _changed_signature_items(
-                        _LAST_SIGNATURE,
-                        signature,
-                    )
-                    _LAST_SIGNATURE = signature
-                    _NOW_MS = now_ms
-                    wm = getattr(context, "window_manager", None) or self._wm
-                    if wm is not None:
-                        wm.animthumb_preview_tick = (
-                            int(getattr(wm, "animthumb_preview_tick", 0) or 0) + 1
-                        ) % 1_000_000
-                    tag_targeted_redraw(changed_item_ids)
-                self._schedule_interval(
-                    preview_cache.next_interval_seconds(
-                        ids,
-                        now_ms,
-                        fps_limit=fps_limit,
-                    )
-                )
-            else:
-                _LAST_SIGNATURE = None
-                self._schedule_interval(PREVIEW_HEALTH_CHECK_INTERVAL_SECONDS)
+            next_interval, _processed = _process_visible_tick(
+                window_manager=(getattr(context, "window_manager", None) or self._wm)
+            )
+            self._schedule_interval(next_interval)
             return {"PASS_THROUGH"}
         _mark_interaction(context, event)
         return {"PASS_THROUGH"}
@@ -827,4 +949,6 @@ def unregister_runtime() -> None:
     _ENGINE_START_SCHEDULED = False
     _WATCHDOG_RUNNING = False
     _UI_REGION_TARGETS.clear()
+    _POPUP_INVOKE_CONTEXTS.clear()
+    _RELEASED_POPUP_OWNER_PTRS.clear()
     _WARM_ITEM_IDS = ()

@@ -30,6 +30,10 @@ try:
         raise RuntimeError("Gallery settings reset operator did not register")
     if not hasattr(bpy.types, "ANIMTHUMB_OT_rename_item"):
         raise RuntimeError("Gallery rename operator did not register")
+    try:
+        bpy.ops.animthumb.show_animated_popup.get_rna_type()
+    except (AttributeError, RuntimeError) as error:
+        raise RuntimeError("Animated popup operator did not register") from error
 
     ingest_properties = bpy.ops.animthumb.ingest_media.get_rna_type().properties
     refresh_properties = bpy.ops.animthumb.refresh_item.get_rna_type().properties
@@ -75,6 +79,7 @@ try:
             "gallery_reset": True,
             "preview_ram_budget_mb": int(wm.animthumb_preview_ram_budget_mb),
             "rename_operator": True,
+            "animated_popup_operator": True,
             "imported_name_fields": True,
         },
     )
